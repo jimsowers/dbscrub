@@ -87,7 +87,10 @@ public static class VerdictResolver
         if (tableConfig is null)
         {
             var verdicts = VerdictFor(table, VerdictKind.Unclassified, reason: null);
-            unclassified.AddRange(verdicts);
+
+            // Not every verdict here IS unclassified — system-generated columns
+            // were swapped to Exempt inside VerdictFor.
+            unclassified.AddRange(verdicts.Where(v => v.Kind == VerdictKind.Unclassified));
             return new TablePlan(table, TableAction.Untouched, verdicts, IsConfigured: false);
         }
 
@@ -112,11 +115,15 @@ public static class VerdictResolver
         {
             if (!configByColumn.Remove(column.Name, out var columnConfig))
             {
-                var verdict = new ColumnVerdict(
-                    table.Schema, table.Name, column.Name, VerdictKind.Unclassified, null, null);
+                var verdict = MakeVerdict(table, column, VerdictKind.Unclassified, reason: null);
 
                 columns.Add(verdict);
-                unclassified.Add(verdict);
+
+                if (verdict.Kind == VerdictKind.Unclassified)
+                {
+                    unclassified.Add(verdict);
+                }
+
                 continue;
             }
 
@@ -171,23 +178,55 @@ public static class VerdictResolver
 
         if (config.Strategy != ColumnStrategy.Keep && !column.IsWritable)
         {
-            var why = column.IsComputed ? "a computed column" : "an identity column";
+            var (why, fix) = column switch
+            {
+                { IsComputed: true } =>
+                    ("a computed column", "Mask the columns its expression reads instead."),
+                { IsIdentity: true } =>
+                    ("an identity column", "Use \"keep\" — an identity value is a surrogate key, not PII."),
+                _ =>
+                    ($"maintained by SQL Server ({column.GeneratedAlwaysDescription})",
+                     "Remove the entry. SQL Server rejects any UPDATE of a GENERATED ALWAYS column, "
+                     + "and these carry row-version timestamps, never PII."),
+            };
 
             problems.Add(new ConfigError(
                 ConfigErrorCodes.InvalidValue,
                 path,
                 $"{table.QualifiedName}.{column.Name} cannot be masked because it is {why}.",
-                column.IsComputed
-                    ? "Mask the columns its expression reads instead."
-                    : "Use \"keep\" — an identity value is a surrogate key, not PII.",
+                fix,
                 Line: 0,
                 Column: 0));
         }
     }
 
-    /// <summary>Gives every column in a table the same verdict.</summary>
+    /// <summary>Gives every column in a table the same verdict, minus the exemptions.</summary>
     private static List<ColumnVerdict> VerdictFor(SchemaTable table, VerdictKind kind, string? reason) =>
         table.Columns
-            .Select(c => new ColumnVerdict(table.Schema, table.Name, c.Name, kind, null, reason))
+            .Select(c => MakeVerdict(table, c, kind, reason))
             .ToList();
+
+    /// <summary>
+    /// One column's verdict, with the one override that applies everywhere: a
+    /// system-generated column is never UNCLASSIFIED. Asking a human to
+    /// classify ValidFrom is asking a question with only one legal answer, and
+    /// every such row makes the list people actually need to read longer.
+    ///
+    /// Note this only fires for Unclassified. Inside a truncated table the
+    /// honest verdict is still Truncated — the rows go either way.
+    /// </summary>
+    private static ColumnVerdict MakeVerdict(
+        SchemaTable table,
+        SchemaColumn column,
+        VerdictKind kind,
+        string? reason)
+    {
+        if (kind == VerdictKind.Unclassified && column.IsSystemGenerated)
+        {
+            return new ColumnVerdict(table.Schema, table.Name, column.Name, VerdictKind.Exempt, null,
+                $"maintained by SQL Server ({column.GeneratedAlwaysDescription})");
+        }
+
+        return new ColumnVerdict(table.Schema, table.Name, column.Name, kind, null, reason);
+    }
 }

@@ -60,7 +60,12 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
                 c.is_nullable  AS IsNullable,
                 c.max_length   AS MaxLength,
                 c.is_computed  AS IsComputed,
-                c.is_identity  AS IsIdentity
+                c.is_identity  AS IsIdentity,
+                -- Temporal period columns and ledger columns. NOT covered by
+                -- is_computed or is_identity (both 0 for a period column), and
+                -- deliberately not is_hidden, which is only about visibility.
+                c.generated_always_type      AS GeneratedAlwaysType,
+                c.generated_always_type_desc AS GeneratedAlwaysDescription
         FROM sys.columns AS c
         INNER JOIN sys.tables  AS t  ON t.object_id     = c.object_id
         INNER JOIN sys.schemas AS s  ON s.schema_id     = t.schema_id
@@ -121,7 +126,12 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
                 // max_length is smallint and is -1 for the (max) types.
                 MaxLength: reader.GetInt16(5),
                 IsComputed: reader.GetBoolean(6),
-                IsIdentity: reader.GetBoolean(7));
+                IsIdentity: reader.GetBoolean(7),
+                // generated_always_type is tinyint; the _desc is nvarchar and
+                // is 'NOT_APPLICABLE' rather than NULL for ordinary columns,
+                // but defend against null anyway rather than trust it.
+                GeneratedAlwaysType: reader.GetByte(8),
+                GeneratedAlwaysDescription: reader.IsDBNull(9) ? "NOT_APPLICABLE" : reader.GetString(9));
 
             if (!byTable.TryGetValue(key, out var columns))
             {

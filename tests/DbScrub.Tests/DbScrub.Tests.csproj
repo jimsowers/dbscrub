@@ -27,6 +27,19 @@
     <None Include="..\..\config\masking.sample.json"
           Link="config\masking.sample.json"
           CopyToOutputDirectory="PreserveNewest" />
+
+    <!-- The DbScrubTest fixture. Linked, not moved: the file stays at
+         scripts/create-test-db.sql so the sqlcmd path a human types stays
+         short, and so it sits beside the other run-by-hand script. It belongs
+         to THIS project because it is a test fixture — when the Testcontainers
+         integration tier lands (DECISIONS.md roadmap v0.x) the test will
+         execute this exact DDL, at which point this becomes an
+         EmbeddedResource. No CopyToOutputDirectory yet: nothing reads it in
+         code, and copying a file no test opens is just clutter in bin. -->
+    <None Include="..\..\scripts\create-test-db.sql"
+          Link="Fixtures\create-test-db.sql" />
+    <None Include="..\..\config\dbscrubtest.masking.json"
+          Link="Fixtures\dbscrubtest.masking.json" />
   </ItemGroup>
 
 </Project>
