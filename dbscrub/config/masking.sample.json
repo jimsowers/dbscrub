@@ -1,0 +1,28 @@
+{
+  "$comment": "DbScrub v0 masking config. Every column in the live schema must resolve to a verdict: a column strategy, membership in a truncated table, or keep. Unresolved columns are reported as UNCLASSIFIED (warn mode) or abort the run (fail mode). No renameTo: the team restore script restores directly as AAVSB, and clean runs in-place (DECISIONS.md D10). repairUsers empty: the restore script owns login/user setup. No passwords in this file, ever.",
+  "defaults": {
+    "allowedServers": ["localhost", ".", "(local)", "127.0.0.1"],
+    "unclassifiedColumns": "warn",
+    "batchSize": 5000,
+    "repairUsers": []
+  },
+  "tables": [
+    {
+      "name": "dbo.Person",
+      "history": "truncate",
+      "columns": [
+        { "name": "FirstName",   "strategy": "static",   "value": "Dev" },
+        { "name": "LastName",    "strategy": "scramble" },
+        { "name": "Email",       "strategy": "static",   "value": "dev@example.invalid" },
+        { "name": "Ssn",         "strategy": "scramble" },
+        { "name": "Phone",       "strategy": "scramble" },
+        { "name": "MiddleName",  "strategy": "null" },
+        { "name": "Notes",       "strategy": "static",   "value": "[redacted]" },
+        { "name": "PersonId",    "strategy": "keep",     "reason": "surrogate key" },
+        { "name": "CreatedUtc",  "strategy": "keep",     "reason": "no PII, needed for queries" }
+      ]
+    },
+    { "name": "dbo.LoginAudit",   "strategy": "truncate" },
+    { "name": "dbo.EmailSendLog", "strategy": "truncate" }
+  ]
+}

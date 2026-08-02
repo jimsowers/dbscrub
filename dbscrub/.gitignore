@@ -1,0 +1,9 @@
+bin/
+obj/
+*.user
+.vs/
+.idea/
+TestResults/
+artifacts/
+# real masking configs may embed server names; sample stays, real ones are a team decision
+scripts/refresh-local.ps1
