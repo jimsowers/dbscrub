@@ -1,0 +1,31 @@
+<Project>
+
+  <!--
+    Central Package Management: every NuGet version in the repo lives here, and
+    the .csproj files reference packages WITHOUT a Version attribute.
+
+    Why this file exists at all: CLAUDE.md has a hard guardrail that no new
+    NuGet dependency arrives without discussion. That rule is only auditable if
+    the complete dependency list fits on one screen. It does — this is it.
+    Adding a package means editing this file, which is a visible diff.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Data access. No ORM (CLAUDE.md). -->
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+
+    <!-- CLI parsing. 2.x is the GA line; the API differs substantially from the
+         long-lived 2.0.0-beta* packages, so don't copy beta-era samples. -->
+    <PackageVersion Include="System.CommandLine" Version="2.0.6" />
+  </ItemGroup>
+
+  <ItemGroup Label="Test-only">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+</Project>

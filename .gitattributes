@@ -1,0 +1,10 @@
+# Normalize to LF in the repository; Git checks out native line endings on
+# Windows. Explicit here because this repo now moves between machines, and
+# "every file changed" diffs caused by line-ending drift are noise that hides
+# real changes.
+* text=auto eol=lf
+
+# Binary-ish assets Git should never touch.
+*.bak  binary
+*.png  binary
+*.jpg  binary
