@@ -62,6 +62,21 @@ internal sealed class SchemaBuilder
     public static SchemaColumn Computed(string name) =>
         new(name, "nvarchar", IsNullable: true, MaxLength: 200, IsComputed: true, IsIdentity: false);
 
+    /// <summary>
+    /// A temporal period column, with the exact flag combination SQL Server
+    /// reports for one — verified against the DbScrubTest fixture:
+    /// is_computed = 0, is_identity = 0, is_nullable = 0, generated_always_type
+    /// = 1 (AS_ROW_START) or 2 (AS_ROW_END). The first two being 0 is the whole
+    /// reason this case needed its own flag.
+    /// </summary>
+    public static SchemaColumn PeriodStart(string name = "ValidFrom") =>
+        new(name, "datetime2", IsNullable: false, MaxLength: 8, IsComputed: false, IsIdentity: false,
+            GeneratedAlwaysType: 1, GeneratedAlwaysDescription: "AS_ROW_START");
+
+    public static SchemaColumn PeriodEnd(string name = "ValidTo") =>
+        new(name, "datetime2", IsNullable: false, MaxLength: 8, IsComputed: false, IsIdentity: false,
+            GeneratedAlwaysType: 2, GeneratedAlwaysDescription: "AS_ROW_END");
+
     private SchemaBuilder AddTable(
         string qualifiedName,
         TemporalType temporalType,

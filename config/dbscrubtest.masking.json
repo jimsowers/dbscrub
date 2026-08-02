@@ -1,0 +1,24 @@
+{
+  "$comment": "Masking config for the DbScrubTest fixture (scripts/create-test-db.sql). DELIBERATELY INCOMPLETE: several columns are left unconfigured so `dbscrub report` exercises the UNCLASSIFIED path and its paste-into-config output. Completing it by pasting that output back is the intended workflow (DECISIONS.md D6). Not for any real database.",
+  "defaults": {
+    "allowedServers": ["localhost", ".", "(local)", "127.0.0.1", "localhost\\MSSQLSERVER02"],
+    "unclassifiedColumns": "warn",
+    "batchSize": 5000,
+    "repairUsers": []
+  },
+  "tables": [
+    {
+      "name": "dbo.Person",
+      "history": "truncate",
+      "columns": [
+        { "name": "PersonId",  "strategy": "keep",   "reason": "identity surrogate key" },
+        { "name": "FirstName", "strategy": "static", "value": "Dev" },
+        { "name": "LastName",  "strategy": "scramble" },
+        { "name": "Email",     "strategy": "static", "value": "dev@example.invalid" },
+        { "name": "Ssn",       "strategy": "scramble" },
+        { "name": "Phone",     "strategy": "scramble" }
+      ]
+    },
+    { "name": "dbo.LoginAudit", "strategy": "truncate" }
+  ]
+}
