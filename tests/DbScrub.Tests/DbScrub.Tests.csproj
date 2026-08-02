@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Unit tier only for now. The live-SQL integration tier (CLAUDE.md
+       "Testing tiers") arrives in a later slice behind the Enabled const
+       and its source-scan guard test. -->
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DbScrub.Core\DbScrub.Core.csproj" />
+    <ProjectReference Include="..\..\src\DbScrub.Cli\DbScrub.Cli.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Tests load the real sample config, so a change to it that breaks
+         validation fails the build instead of being discovered at runtime.
+         Link keeps it at a predictable relative path in the output folder. -->
+    <None Include="..\..\config\masking.sample.json"
+          Link="config\masking.sample.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

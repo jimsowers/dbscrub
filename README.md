@@ -4,7 +4,19 @@ A .NET console tool that scrubs PII from a locally restored SQL Server database,
 so day-to-day development (including AI-assisted development) never touches real
 personal data.
 
-**Status:** v0 spec complete, implementation starting. See `docs/SPEC.md`.
+**Status:** slice 1 of 5 complete — config validation, schema inventory, verdict
+resolution, and the read-only `report` command. `clean`, `status`, masking, and
+renaming are not implemented yet; the tool cannot currently modify anything.
+See `docs/SPEC.md` for the target and `docs/HANDOFF.md` for what is verified.
+
+```bash
+dotnet run --project src/DbScrub.Cli -- report \
+  --server localhost --database AAVSB --config config/masking.sample.json
+```
+
+`report` is read-only. It prints the schema-vs-config plan and every
+UNCLASSIFIED column in paste-into-config form. Exit `0` clean, `3` unclassified
+columns in fail mode, `5` invalid config, `1` anything else.
 
 ## The problem
 
@@ -52,6 +64,7 @@ the team's existing script.
 
 - `docs/SPEC.md` — full v0 specification (build from this)
 - `docs/DECISIONS.md` — why things are the way they are, plus roadmap (v1 quarantine pipeline, Bogus, determinism, subsetting)
+- `docs/HANDOFF.md` — current state: what is verified, what has never run, open questions
 - `config/masking.sample.json` — config file format
 - `CLAUDE.md` — working agreement + guardrails for Claude Code sessions
 - `PROMPT.md` — kickoff prompt for the first Claude Code session

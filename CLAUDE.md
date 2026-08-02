@@ -21,6 +21,9 @@ explains why and holds the roadmap. Read both before proposing changes.
   DECISIONS.md rather than silently diverging.
 
 ## Hard guardrails (never violate)
+- NEVER push to `main`. Every change arrives via a feature branch and a pull
+  request. "Push it" / "ship it" from the repo owner means open a PR, never
+  push to main. There is no exception for small or safe-looking changes.
 - Never weaken the safety interlock: localhost-only allowlist with no CLI
   override flag; typed database-name confirmation; refuse already-stamped DBs.
 - Never print PII values in logs, errors, verify output, or tests that use
@@ -28,8 +31,10 @@ explains why and holds the roadmap. Read both before proposing changes.
 - Audit/log/history tables are truncated, not masked (see DECISIONS.md D5).
 - Stamp and rename happen ONLY after a clean verify pass.
 - No new NuGet dependencies beyond: Microsoft.Data.SqlClient,
-  System.CommandLine, test packages (xunit, FluentAssertions, Testcontainers
-  when we get there) without discussing first.
+  System.CommandLine, test packages (xunit, Testcontainers when we get there)
+  without discussing first. NOT FluentAssertions — v8 moved to a paid
+  commercial license; we use xunit's built-in Assert (DECISIONS.md D13).
+  All versions live in Directory.Packages.props so the list stays auditable.
 
 ## Conventions
 - .NET 8, nullable enabled, implicit usings, file-scoped namespaces.
@@ -44,3 +49,26 @@ explains why and holds the roadmap. Read both before proposing changes.
 - Unit tests for the new logic.
 - `dbscrub report` still runs clean against the sample config.
 - README/SPEC updated if behavior changed.
+
+## Human decision points (Claude prepares, Jim executes or approves)
+Claude may draft, explain, and stage any of the following, but never runs them
+unattended:
+- Any statement that mutates a database — DDL, DML, TRUNCATE, sp_rename,
+  ALTER DATABASE. This holds even after the safety interlock ships: the
+  interlock protects against the wrong database, not against the wrong intent.
+- The first run of any destructive command against a newly restored database.
+- Global git config changes, force-push, or anything rewriting pushed history.
+- Adding a permission rule that lets a database-touching command run without a
+  prompt. Revisit only after the safety interlock (SPEC section 3) exists and
+  has a passing test; scope it to a concrete command shape, never a wildcard.
+- Running the live-SQL test tier (below).
+
+## Testing tiers
+| Tier | Runs | Gating |
+|---|---|---|
+| Unit | every `dotnet test`, CI | none — the net everything else leans on |
+| Integration (live SQL Server) | manually, by Jim, on demand | `const bool Enabled = false` in the test project + skip attributes + an always-on unit test that source-scans the const and fails if it was committed as `true` |
+
+Claude never claims the integration tier passed. When a diff touches SQL
+generation or execution, Claude stops and names the suite Jim should run
+before reporting the work done.

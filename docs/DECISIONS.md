@@ -106,6 +106,52 @@ act. Auto-clean convenience lives in the personal wrapper and/or a dev-only
 MSBuild target invoking the CLI (build tooling doesn't deploy). Core/Cli stay
 app-agnostic and reusable for other databases.
 
+## D12 — Config validation is hand-rolled; no JSON Schema library
+SPEC section 4 says "schema-validated at load". Taken literally that means a
+JSON Schema library (`JsonSchema.Net`, `NJsonSchema`). Considered and REJECTED
+for v0, even after the no-new-dependency guardrail was explicitly waived for
+this decision.
+
+Reasons, in order of weight:
+1. **It covers a minority of the rules.** JSON Schema can express shape, the
+   closed strategy set, `batchSize`, and the `unclassifiedColumns` enum. It
+   cannot express: no-duplicate table/column names; `strategy: "null"` requires
+   a NULLABLE column; `strategy: "static"` requires a value type-compatible with
+   the column. The last two need the live schema from SchemaInventory, so a
+   semantic validation pass gets written either way — the library would only
+   replace the handful of checks a `switch` already handles.
+2. **Two sources of truth.** A schema document plus the C# model drift the day
+   someone adds a strategy, and nothing fails when they disagree.
+3. **Worse errors.** Validators emit `Value at /tables/0/columns/3 does not
+   match schema`. `System.Text.Json` exposes `LineNumber`/`BytePositionInLine`,
+   so hand-rolled checks produce `masking.sample.json(16,9): DBS005 —
+   dbo.Person.Email uses strategy 'static' but has no "value"` plus the exact
+   JSON to paste. That IS SPEC section 4's "line-level errors" requirement;
+   the library would move us away from it.
+
+Consequence: "schema-validated" in SPEC section 4 means "validated against the
+config model and, once available, against the live schema" — not "validated by
+a JSON Schema document". Exit code 5 and fail-fast behavior are unchanged.
+Revisit if the config format ever needs to be validated by something other
+than this tool (an editor, a CI linter, another language) — that is the case
+where a published schema document earns its keep.
+
+## D13 — Test assertions use xunit's built-in Assert; no assertion library
+CLAUDE.md's dependency allowlist named FluentAssertions. FluentAssertions v8
+moved to a paid commercial license (Xceed); this is company work, so that
+applies. Options were: pin 7.2.2 (last Apache-2.0), switch to Shouldly
+(BSD-3, actively maintained, good failure messages), or use plain `Assert`.
+
+Chose plain `Assert`. The config, verdict, and inventory models are C#
+`record` types, so they have structural equality — which means
+`Assert.Equal(expected, actual)` works correctly on whole objects and
+collections of them. Deep-object-graph comparison is the main thing an
+assertion library buys, and records remove the need for it. Where a failure
+needs explaining, a custom message naming the fix beats any auto-generated one.
+
+CLAUDE.md's allowlist has been corrected so a future session doesn't install
+FluentAssertions v8 and quietly create a license obligation.
+
 ## Roadmap
 
 - **v0** (this repo, now): spec in SPEC.md.

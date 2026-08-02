@@ -1,0 +1,29 @@
+<Project>
+
+  <!--
+    Shared MSBuild settings for every project in this repo.
+    MSBuild imports this automatically for any .csproj at or below this folder,
+    so the individual .csproj files stay almost empty. One place to change the
+    target framework or turn a warning into an error.
+  -->
+  <PropertyGroup>
+    <!-- SPEC section 1: net8.0. The machine has SDK 10 installed, which can
+         target net8.0 fine; the 8.0 runtime is present so the output runs. -->
+    <TargetFramework>net8.0</TargetFramework>
+
+    <!-- CLAUDE.md conventions -->
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+
+    <!-- A nullable-reference warning in a tool that decides what to overwrite in
+         a database is a bug report, not a suggestion. Fail the build on it. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Deterministic assembly version so the stamp's "tool version"
+         (SPEC 5.5) is reproducible from a given commit. -->
+    <Version>0.1.0</Version>
+    <NeutralLanguage>en-US</NeutralLanguage>
+  </PropertyGroup>
+
+</Project>

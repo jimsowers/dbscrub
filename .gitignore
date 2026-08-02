@@ -7,3 +7,5 @@ TestResults/
 artifacts/
 # real masking configs may embed server names; sample stays, real ones are a team decision
 scripts/refresh-local.ps1
+# Claude Code: shared skills are committed; per-machine permission grants are not
+.claude/settings.local.json

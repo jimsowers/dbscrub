@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- All the smarts: config model, schema inventory, diff, strategies,
+       hygiene, verify, stamp/rename (SPEC section 1). Cli is a thin shell.
+       TargetFramework/Nullable/etc. come from ../../Directory.Build.props;
+       package versions from ../../Directory.Packages.props. -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Lets the test project see internal types without making them public
+         purely for testability. -->
+    <InternalsVisibleTo Include="DbScrub.Tests" />
+  </ItemGroup>
+
+</Project>

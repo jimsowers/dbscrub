@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Command wiring, console UX, exit codes (SPEC section 2). No logic that
+       isn't about talking to a human or a shell. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- The command is `dbscrub`, not `DbScrub.Cli`. -->
+    <AssemblyName>dbscrub</AssemblyName>
+    <RootNamespace>DbScrub.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DbScrub.Core\DbScrub.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- So exit codes and command bodies can be tested without shelling out. -->
+    <InternalsVisibleTo Include="DbScrub.Tests" />
+  </ItemGroup>
+
+</Project>
