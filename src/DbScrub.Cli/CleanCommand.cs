@@ -330,7 +330,11 @@ internal static class CleanCommand
             var width = verify.Hits.Max(h => h.QualifiedColumn.Length);
             foreach (var hit in verify.Hits.OrderByDescending(h => h.Count))
             {
-                error.WriteLine($"  {hit.QualifiedColumn.PadRight(width)}  {hit.Pattern,-13} {hit.Count:N0} value(s)");
+                // The operator-facing label, not the internal pattern id.
+                // "phone-dashed" is a name this code uses to talk to itself.
+                var label = $"{VerifyPattern.LabelFor(hit.Pattern)} ({VerifyPattern.DescriptionFor(hit.Pattern)})";
+
+                error.WriteLine($"  {hit.QualifiedColumn.PadRight(width)}  {hit.Count,6:N0} × {label}");
             }
 
             error.WriteLine();

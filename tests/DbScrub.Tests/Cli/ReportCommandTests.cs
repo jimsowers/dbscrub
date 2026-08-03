@@ -38,7 +38,7 @@ public class ReportCommandTests : IDisposable
             """);
 
         Assert.Equal(ExitCode.Success, result.ExitCode);
-        Assert.Contains("UNCLASSIFIED columns: none.", result.Output);
+        Assert.Contains("Every column has a rule.", result.Output);
     }
 
     [Fact]
@@ -55,7 +55,8 @@ public class ReportCommandTests : IDisposable
             """);
 
         Assert.Equal(ExitCode.Success, result.ExitCode);
-        Assert.Contains("UNCLASSIFIED columns (2)", result.Output);
+        Assert.Contains("Columns with no rule (2)", result.Output);
+        Assert.Contains("dbscrub will NOT touch these", result.Output);
     }
 
     [Fact]
@@ -214,7 +215,7 @@ public class ReportCommandTests : IDisposable
             """);
 
         Assert.Contains("DELETE FROM [dbo].[LoginAudit];", result.Output);
-        Assert.Contains("dbo.Person  (2 column(s), row by row, batched on the primary key)", result.Output);
+        Assert.Contains("dbo.Person  (2 column(s), one row at a time, in primary key order)", result.Output);
         Assert.Contains("scramble  letters->x", result.Output);
     }
 

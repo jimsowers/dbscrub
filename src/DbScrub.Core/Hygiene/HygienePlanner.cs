@@ -31,9 +31,12 @@ public static class HygienePlanner
     /// Everything that must happen BEFORE the first masking UPDATE. Order is not
     /// cosmetic:
     ///
-    ///   1. Change tracking OFF, before anything else. Its capture tables hold
-    ///      full copies of changed rows; masking first would just add the
-    ///      masked versions alongside the originals.
+    ///   1. Change Data Capture OFF, before anything else. Its capture tables
+    ///      hold full copies of changed rows; masking first would just add the
+    ///      masked versions alongside the originals. NOTE this is CDC, not the
+    ///      separate "Change Tracking" feature — that one records only that a
+    ///      row changed plus its key, never the values, and dbscrub does not
+    ///      touch it.
     ///
     ///   2. Temporal versioning OFF for every system-versioned table, and its
     ///      history emptied unless the config asked for the history to be masked
@@ -54,7 +57,8 @@ public static class HygienePlanner
         // release its space, which is what makes batching worth doing at all.
         // Re-running it on a database that is already SIMPLE does nothing.
         steps.Add(new HygieneStep(
-            Description: $"Set {plan.Schema.DatabaseName} to SIMPLE recovery so batches release log space",
+            Description: $"Stop {plan.Schema.DatabaseName} from keeping a record of every change it is about "
+                + "to make (SIMPLE recovery), so the log file does not grow to hold the whole run",
             Sql: $"ALTER DATABASE {SqlIdentifier.Quote(plan.Schema.DatabaseName)} SET RECOVERY SIMPLE;",
             Target: plan.Schema.DatabaseName,
             Kind: HygieneStepKind.SetSimpleRecovery));
@@ -62,10 +66,11 @@ public static class HygienePlanner
         if (plan.Schema.IsCdcEnabled)
         {
             steps.Add(new HygieneStep(
-                Description: $"Disable change data capture on {plan.Schema.DatabaseName}",
+                Description: "Turn off Change Data Capture, which deletes the hidden tables holding "
+                    + "SQL Server's copies of every changed row",
                 Sql: "EXEC sys.sp_cdc_disable_db;",
                 Target: plan.Schema.DatabaseName,
-                Kind: HygieneStepKind.DisableChangeTracking));
+                Kind: HygieneStepKind.DisableChangeDataCapture));
         }
 
         foreach (var table in plan.Temporal)
@@ -111,7 +116,8 @@ public static class HygienePlanner
     /// personal data in a less obvious place, and the run reports success.
     /// </summary>
     private static HygieneStep BuildDetach(TablePlan table) =>
-        new(Description: $"Detach history from {table.QualifiedName} so masking cannot copy rows into it",
+        new(Description: $"Pause history keeping on {table.QualifiedName}, so masking it cannot copy the "
+                + "original rows into the history table",
             Sql: $"ALTER TABLE {Quote(table)} SET (SYSTEM_VERSIONING = OFF);",
             Target: table.QualifiedName,
             Kind: HygieneStepKind.DisableVersioning);
@@ -121,7 +127,7 @@ public static class HygienePlanner
         var (schema, name) = RequireHistory(table);
 
         return new HygieneStep(
-            Description: $"Empty history table {schema}.{name}",
+            Description: $"Delete every past version of every row, held in {schema}.{name}",
             // TRUNCATE, not DELETE: a history table has no foreign keys
             // pointing at it by definition, and it is the one place where the
             // row count can be large enough for the difference to matter.
@@ -143,7 +149,7 @@ public static class HygienePlanner
         // only — the period columns are GENERATED ALWAYS and refused for
         // masking, so their values are exactly what SQL Server itself wrote.
         return new HygieneStep(
-            Description: $"Reattach history to {table.QualifiedName}",
+            Description: $"Resume history keeping on {table.QualifiedName}, now that masking is finished",
             Sql: $"ALTER TABLE {Quote(table)} SET (SYSTEM_VERSIONING = ON "
                 + $"(HISTORY_TABLE = {quotedHistory}, DATA_CONSISTENCY_CHECK = OFF));",
             Target: table.QualifiedName,
@@ -161,7 +167,7 @@ public static class HygienePlanner
     /// for speed.
     /// </summary>
     private static HygieneStep BuildTruncate(TablePlan table) =>
-        new(Description: $"Empty {table.QualifiedName}",
+        new(Description: $"Delete every row in {table.QualifiedName}",
             Sql: $"DELETE FROM {Quote(table)};",
             Target: table.QualifiedName,
             Kind: HygieneStepKind.TruncateTable);
@@ -199,7 +205,7 @@ public enum HygieneStepKind
     /// <summary>SPEC 5.1 preflight, carried in the pre-mask list so it is printed with the rest.</summary>
     SetSimpleRecovery,
 
-    DisableChangeTracking,
+    DisableChangeDataCapture,
     DisableVersioning,
     TruncateHistory,
     ReEnableVersioning,

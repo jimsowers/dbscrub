@@ -51,19 +51,110 @@ public static class PlanReport
         builder.AppendLine();
     }
 
+    /// <summary>
+    /// What is in this database, and — where it matters — what that MEANS.
+    ///
+    /// The two features named here are the ones that keep extra copies of rows
+    /// where no column-level rule can reach, so they are the reason half this
+    /// tool exists. Both were previously printed as bare counts against labels
+    /// ("CDC enabled", "Temporal tables") that assume the reader already knows
+    /// SQL Server's feature names, which is exactly the knowledge a new person
+    /// does not have and should not need.
+    ///
+    /// The explanation appears only when the feature is actually present.
+    /// Teaching someone about temporal tables on a database that has none is
+    /// noise, and noise is what stops people reading output.
+    /// </summary>
     private static void AppendSchemaFacts(StringBuilder builder, ScrubPlan plan)
     {
         var columnCount = plan.Schema.Tables.Sum(t => t.Columns.Count);
         var temporal = plan.Temporal.Count();
         var cdcTracked = plan.CdcTracked.Count();
 
-        builder.AppendLine("Schema");
-        builder.AppendLine($"  Tables              {plan.Schema.Tables.Count}");
-        builder.AppendLine($"  Columns             {columnCount}");
-        builder.AppendLine($"  CDC enabled         {(plan.Schema.IsCdcEnabled ? "yes" : "no")}");
-        builder.AppendLine($"  CDC-tracked tables  {cdcTracked}");
-        builder.AppendLine($"  Temporal tables     {temporal}");
+        builder.AppendLine("What is in this database");
+        builder.AppendLine($"  Tables   {plan.Schema.Tables.Count}");
+        builder.AppendLine($"  Columns  {columnCount}");
         builder.AppendLine();
+
+        if (plan.Schema.IsCdcEnabled)
+        {
+            builder.AppendLine($"  Change Data Capture is ON, tracking {Count(cdcTracked, "table")}.");
+            builder.AppendLine("    SQL Server is keeping a copy of every row that changes, in hidden");
+            builder.AppendLine("    tables. Those copies hold the original values, so dbscrub switches");
+            builder.AppendLine("    the feature off — which deletes them — before masking anything.");
+        }
+        else
+        {
+            builder.AppendLine("  Change Data Capture is off — nothing is shadow-copying row changes.");
+        }
+
+        builder.AppendLine();
+
+        if (temporal > 0)
+        {
+            builder.AppendLine($"  {Count(temporal, "table")} keeps a hidden history of past rows.");
+            builder.AppendLine("    SQL Server calls these \"system-versioned\" or \"temporal\" tables: every");
+            builder.AppendLine("    previous version of every row is kept in a companion table, which");
+            builder.AppendLine("    holds the original values. dbscrub empties it, and pauses history");
+            builder.AppendLine("    while masking so the old values are not written straight back in.");
+        }
+        else
+        {
+            builder.AppendLine("  No table keeps a hidden history of past rows.");
+        }
+
+        builder.AppendLine();
+    }
+
+    /// <summary>"1 table" / "3 tables" — an "(s)" makes a reader do the work.</summary>
+    private static string Count(int value, string noun) =>
+        value == 1 ? $"1 {noun}" : $"{value} {noun}s";
+
+    /// <summary>
+    /// The width to wrap prose at. 80 is the terminal every terminal is at
+    /// least as wide as, and a report that only reads well maximised is a report
+    /// half the people running it will see broken.
+    /// </summary>
+    private const int WrapWidth = 78;
+
+    /// <summary>
+    /// Wraps on whitespace, indenting continuation lines two spaces further than
+    /// the first so the start of each sentence stays findable when several are
+    /// stacked. Words longer than the line are left alone rather than broken —
+    /// an over-long word here is a table name, and a split identifier is worse
+    /// than a long line.
+    /// </summary>
+    private static void AppendWrapped(StringBuilder builder, string text, string indent)
+    {
+        var continuation = indent + "  ";
+        var width = WrapWidth - indent.Length;
+
+        var line = new StringBuilder();
+
+        foreach (var word in text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.Length > 0 && line.Length + 1 + word.Length > width)
+            {
+                builder.AppendLine($"{indent}{line}");
+                line.Clear();
+
+                // Continuation lines have less room, by exactly their extra indent.
+                width = WrapWidth - continuation.Length;
+                indent = continuation;
+            }
+
+            if (line.Length > 0)
+            {
+                line.Append(' ');
+            }
+
+            line.Append(word);
+        }
+
+        if (line.Length > 0)
+        {
+            builder.AppendLine($"{indent}{line}");
+        }
     }
 
     /// <summary>
@@ -82,7 +173,15 @@ public static class PlanReport
 
         foreach (var step in steps)
         {
-            builder.AppendLine($"  {step.Description}");
+            // Descriptions explain a SQL Server behaviour rather than naming it,
+            // so they are sentences and they are long. Wrapped here rather than
+            // shortened there: the explanation is the point, and a line that
+            // runs off the right edge of a terminal is not read at all.
+            AppendWrapped(builder, step.Description, indent: "  ");
+
+            // The SQL itself is NEVER wrapped. It is the thing a person checks
+            // before approving, and a statement broken across lines is a
+            // statement you cannot copy, paste, or trust you have read whole.
             builder.AppendLine($"      {step.Sql}");
         }
 
@@ -121,9 +220,9 @@ public static class PlanReport
     /// </summary>
     private static string Describe(MaskMode mode) => mode switch
     {
-        MaskMode.RowByRow => "row by row, batched on the primary key",
-        MaskMode.BatchedConstant => "set-based, batched on the primary key",
-        MaskMode.WholeTable => "set-based, ONE transaction — this table has no primary key",
+        MaskMode.RowByRow => "one row at a time, in primary key order",
+        MaskMode.BatchedConstant => "whole batches at once, in primary key order",
+        MaskMode.WholeTable => "the whole table in one go — it has no primary key to split it up",
         _ => mode.ToString(),
     };
 
@@ -142,11 +241,19 @@ public static class PlanReport
         var keptWholesale = scrub.KeptWholesale.ToList();
 
         builder.AppendLine("Summary");
-        builder.AppendLine($"  Tables truncated    {scrub.Truncated.Count()}");
-        builder.AppendLine($"  Tables masked       {plan.Mask.Tables.Count}");
-        builder.AppendLine($"  Columns masked      {plan.Mask.ColumnCount}");
-        builder.AppendLine($"  Columns kept        {kept}");
-        builder.AppendLine($"  UNCLASSIFIED        {scrub.Unclassified.Count}");
+        builder.AppendLine($"  Tables emptied           {scrub.Truncated.Count()}");
+        builder.AppendLine($"  Tables masked            {plan.Mask.Tables.Count}");
+        builder.AppendLine($"  Columns masked           {plan.Mask.ColumnCount}");
+        builder.AppendLine($"  Columns marked \"keep\"    {kept}");
+
+        // The line most likely to be skimmed, and the only one describing data
+        // this run does NOT protect. A bare count against a bare label is not
+        // enough — it has to say what the number means for the database.
+        builder.AppendLine(scrub.Unclassified.Count == 0
+            ? "  Columns with no rule     0"
+            : $"  Columns with no rule     {scrub.Unclassified.Count}"
+                + "   <-- left untouched, real data included");
+
         builder.AppendLine();
 
         // A table with no primary key is masked in one unbounded transaction.
@@ -155,9 +262,11 @@ public static class PlanReport
         var unbatched = plan.Unbatched.ToList();
         if (unbatched.Count > 0)
         {
-            builder.AppendLine($"Masked in ONE transaction ({unbatched.Count}) — no primary key to batch on");
-            builder.AppendLine("  Fine for a small table. On a large one this holds a single long");
-            builder.AppendLine("  transaction; adding a primary key lets dbscrub batch it.");
+            builder.AppendLine($"Rewritten all at once ({unbatched.Count}) — no primary key to split them up");
+            builder.AppendLine("  dbscrub normally works through a table in small batches, so each one");
+            builder.AppendLine("  finishes and releases its lock. Without a primary key it cannot tell");
+            builder.AppendLine("  the rows apart, so the whole table goes in a single step. Fine when it");
+            builder.AppendLine("  is small; slow and lock-heavy when it is not. A primary key fixes it.");
 
             foreach (var table in unbatched)
             {
@@ -209,17 +318,39 @@ public static class PlanReport
         builder.AppendLine();
     }
 
+    /// <summary>
+    /// The columns nobody has decided about.
+    ///
+    /// This block used to be headed "UNCLASSIFIED", which is a poor word for it
+    /// in two ways. It names the state of the CONFIG rather than the consequence
+    /// for the DATABASE, and — worse in a tool about personal data — it collides
+    /// head-on with the security marking, where UNCLASSIFIED means "not
+    /// sensitive, safe to share". That is the exact opposite of what it means
+    /// here, and a reader who takes the familiar meaning takes away the most
+    /// dangerous possible conclusion.
+    ///
+    /// So the heading now says what happens, the subtitle says what it costs,
+    /// and the config keyword is named once so the two can still be connected.
+    /// </summary>
     private static void AppendUnclassified(StringBuilder builder, ScrubPlan plan)
     {
         if (plan.Unclassified.Count == 0)
         {
-            builder.AppendLine("UNCLASSIFIED columns: none. Every live column has a verdict.");
+            builder.AppendLine("Every column has a rule. Nothing is being left untouched by accident.");
             return;
         }
 
-        builder.AppendLine($"UNCLASSIFIED columns ({plan.Unclassified.Count})");
-        builder.AppendLine("Every one of these is unprotected. Paste the blocks below into your config,");
-        builder.AppendLine("changing \"keep\" to a real strategy wherever the column actually holds PII.");
+        builder.AppendLine($"Columns with no rule ({plan.Unclassified.Count}) — dbscrub will NOT touch these");
+        builder.AppendLine();
+        builder.AppendLine("Nobody has told dbscrub what to do with the columns below, so it leaves them");
+        builder.AppendLine("exactly as they are. If any of them holds personal information, that");
+        builder.AppendLine("information survives this run.");
+        builder.AppendLine();
+        builder.AppendLine("Paste the blocks below into your config, then replace \"keep\" with a real");
+        builder.AppendLine("strategy for every column that actually holds something worth hiding.");
+        builder.AppendLine();
+        builder.AppendLine("To make this stop a run instead of warning about it, set");
+        builder.AppendLine("\"unclassifiedColumns\": \"fail\" in the config, or pass --fail-on-unclassified.");
         builder.AppendLine();
         builder.Append(UnclassifiedFormatter.Format(plan));
     }

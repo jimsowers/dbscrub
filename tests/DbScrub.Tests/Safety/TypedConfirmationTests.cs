@@ -72,9 +72,9 @@ public class TypedConfirmationTests
 
         Assert.Contains("cannot be undone", summary);
         Assert.Contains(@"localhost\MSSQLSERVER02", summary);
-        Assert.Contains("Tables emptied    1", summary);
-        Assert.Contains("Tables masked     1", summary);
-        Assert.Contains("Columns masked    2", summary);
+        Assert.Contains("Tables emptied      1", summary);
+        Assert.Contains("Tables masked       1", summary);
+        Assert.Contains("Columns masked      2", summary);
     }
 
     [Fact]
@@ -94,8 +94,8 @@ public class TypedConfirmationTests
 
         var summary = TypedConfirmation.BuildSummary(plan, "localhost", renameTo: null);
 
-        Assert.Contains("WILL BE DISABLED", summary);
-        Assert.Contains("history will be emptied", summary);
+        Assert.Contains("Change Data Capture will be TURNED OFF", summary);
+        Assert.Contains("keep a hidden history of past rows", summary);
     }
 
     [Fact]
