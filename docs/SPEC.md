@@ -173,9 +173,12 @@ Progress output per table (rows done / total).
   (SHA-256 of the config file) and insert a row into `dbo.__SanitizationLog`
   (created if missing): run timestamp, tool version, config hash, tables
   touched, rows updated, duration.
-- `CHECKPOINT` + shrink the log file (best-effort; in-place cleaning still
-  leaves pre-images in MDF ghost records — accepted for this tier, the
-  quarantine pipeline is the real fix).
+- NO log cleanup is attempted. In-place cleaning leaves pre-images of the
+  original values in both the data file (ghost records) and the transaction log,
+  and nothing dbscrub can run removes them reliably. An earlier version of this
+  spec called for `CHECKPOINT` + a log shrink; that was removed because it
+  implied a cleanup it does not perform (DECISIONS.md D24). The v1 quarantine
+  pipeline is the real fix.
 - Rename (ONLY when a rename target is set and differs from the current
   name — the AAVSB default flow skips this entirely):
   `ALTER DATABASE [<current>] SET SINGLE_USER WITH ROLLBACK IMMEDIATE`
