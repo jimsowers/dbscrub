@@ -14,8 +14,8 @@
       "columns": [
         { "name": "PersonId",   "strategy": "keep",     "reason": "identity surrogate key" },
         { "name": "FirstName",  "strategy": "static",   "value": "Dev" },
-        { "name": "LastName",   "strategy": "scramble" },
-        { "name": "Email",      "strategy": "static",   "value": "dev@example.invalid" },
+        { "name": "LastName",   "strategy": "scramble", "unique": "key" },
+        { "name": "Email",      "strategy": "email" },
         { "name": "Ssn",        "strategy": "scramble" },
         { "name": "Phone",      "strategy": "scramble" },
         {

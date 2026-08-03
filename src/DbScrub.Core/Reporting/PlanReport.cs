@@ -206,7 +206,7 @@ public static class PlanReport
             var width = table.Columns.Max(c => c.Name.Length);
             foreach (var column in table.Columns)
             {
-                builder.AppendLine($"      {column.Name.PadRight(width)}  {Describe(column.Strategy)}");
+                builder.AppendLine($"      {column.Name.PadRight(width)}  {Describe(column)}");
             }
         }
 
@@ -226,11 +226,27 @@ public static class PlanReport
         _ => mode.ToString(),
     };
 
+    /// <summary>
+    /// One column's line in the plan. Takes the whole column rather than just
+    /// the strategy so the `unique` modifier is visible — it changes what lands
+    /// in the database, so leaving it off the plan would mean approving a run
+    /// whose output the plan did not describe.
+    /// </summary>
+    private static string Describe(MaskColumn column)
+    {
+        var described = Describe(column.Strategy);
+
+        return column.Unique == UniqueMode.Key
+            ? $"{described}, a different value per row"
+            : described;
+    }
+
     private static string Describe(ColumnStrategy strategy) => strategy switch
     {
         ColumnStrategy.Null => "null      set to NULL",
         ColumnStrategy.Scramble => "scramble  letters->x, digits->9, length preserved",
         ColumnStrategy.Static => "static    fixed replacement value",
+        ColumnStrategy.Email => $"email     generated, e.g. {FakeEmail.For("15")} (15 = the row's key)",
         _ => strategy.ToString(),
     };
 

@@ -404,7 +404,9 @@ public class CleanCommandTests : IDisposable
     private sealed class FakeVerifier(VerifyReport report) : IVerifier
     {
         public Task<VerifyReport> VerifyAsync(
-            DatabaseSchema schema, CancellationToken cancellationToken = default) =>
+            DatabaseSchema schema,
+            IReadOnlySet<string> knownReplacements,
+            CancellationToken cancellationToken = default) =>
             Task.FromResult(report);
     }
 

@@ -81,6 +81,39 @@ public static class Scrambler
     }
 
     /// <summary>
+    /// Scrambles, then overwrites the TAIL with the row's key so no two rows
+    /// share a value (DECISIONS.md D23).
+    ///
+    /// Overwriting rather than appending is what preserves length. `Xxxxxxx`
+    /// with key 42 becomes `Xxxxx42`, still seven characters — so a fixed-width
+    /// column still fits and scramble keeps the one guarantee it exists for.
+    /// Appending would overflow a char(11) and break it.
+    ///
+    /// When the value is SHORTER than the key there is nothing to overwrite into
+    /// and the result is the key alone. That grows the value, which is why the
+    /// planner refuses this strategy on a column too narrow to hold the widest
+    /// key the table could produce.
+    /// </summary>
+    public static string? ScrambleUnique(string? value, string discriminator)
+    {
+        var scrambled = Scramble(value);
+
+        if (scrambled is null)
+        {
+            // NULL stays NULL. A null row is not a duplicate of anything, so
+            // uniqueness has nothing to say about it.
+            return null;
+        }
+
+        if (scrambled.Length <= discriminator.Length)
+        {
+            return discriminator;
+        }
+
+        return string.Concat(scrambled.AsSpan(0, scrambled.Length - discriminator.Length), discriminator);
+    }
+
+    /// <summary>
     /// True when every character in the value is something Scramble could have
     /// produced — i.e. it contains no letter other than x/X and no digit other
     /// than 9.
@@ -124,5 +157,38 @@ public static class Scrambler
         // Punctuation alone ("---") is not evidence of scrambling; something
         // has to have actually been replaced.
         return sawPlaceholder;
+    }
+
+    /// <summary>
+    /// True when the value is scrambler output carrying a row key on the end —
+    /// what <see cref="ScrambleUnique"/> produces.
+    ///
+    /// Needed because the discriminator's digits are real digits, not 9s, so
+    /// `xxx@xxxxxxx.xxxxx42` fails <see cref="LooksScrambled"/> outright. Left
+    /// unhandled, the verify gate would flag every uniquely-masked column and no
+    /// correctly scrubbed database could be stamped — the same trap D17 records.
+    ///
+    /// Stays conservative by peeling only a TRAILING run of digits and hyphens
+    /// (the composite-key separator) and requiring everything before it to be
+    /// scrambler output. A real Social Security number peels to `123-45-` whose
+    /// remaining digits are not 9s, so it is not excused.
+    /// </summary>
+    public static bool LooksScrambledWithKey(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return false;
+        }
+
+        var end = value.Length;
+        while (end > 0 && (char.IsAsciiDigit(value[end - 1]) || value[end - 1] == '-'))
+        {
+            end--;
+        }
+
+        // Nothing peeled means there is no discriminator, and LooksScrambled has
+        // already had its say. Everything peeled means the value is digits alone,
+        // which this must not excuse.
+        return end != value.Length && end != 0 && LooksScrambled(value[..end]);
     }
 }

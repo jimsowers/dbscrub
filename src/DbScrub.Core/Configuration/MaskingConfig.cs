@@ -79,11 +79,28 @@ public sealed record TableConfig(
 }
 
 /// <summary>One entry in a table's `columns`.</summary>
+/// <param name="Unique">
+/// Whether every row should get a DIFFERENT masked value, seeded from its
+/// primary key (DECISIONS.md D23). A modifier rather than a strategy of its
+/// own: uniqueness is orthogonal to HOW a value is masked, and folding it into
+/// the strategy name would multiply a deliberately closed set.
+/// </param>
 public sealed record ColumnConfig(
     string Name,
     ColumnStrategy Strategy,
     ConfigValue? Value,
-    string? Reason);
+    string? Reason,
+    UniqueMode Unique = UniqueMode.None);
+
+/// <summary>How a column achieves per-row distinctness (DECISIONS.md D23).</summary>
+public enum UniqueMode
+{
+    /// <summary>The default: every row gets the same masked value.</summary>
+    None,
+
+    /// <summary>Seeded from the row's primary key — unique by construction, and stable across runs.</summary>
+    Key,
+}
 
 /// <summary>
 /// The literal behind `"value"` for a static strategy, kept as raw text plus
@@ -115,6 +132,18 @@ public enum ColumnStrategy
 
     /// <summary>Explicit "no PII here". Recorded so the diff stays silent about it.</summary>
     Keep,
+
+    /// <summary>
+    /// A generated, non-deliverable address per row: fakeemail15@notreal.invalid.
+    ///
+    /// Exists as its own strategy rather than as a `static` value because the
+    /// tool has to OWN the shape. A config-supplied address is opaque to the
+    /// code and indistinguishable from a real one, so the verify gate can only
+    /// recognise it from a literal list — which cannot work when the value
+    /// differs per row. A generated one is recognisable by construction. See
+    /// FakeEmail.
+    /// </summary>
+    Email,
 }
 
 /// <summary>

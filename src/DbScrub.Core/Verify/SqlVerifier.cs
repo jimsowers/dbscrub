@@ -8,7 +8,14 @@ namespace DbScrub.Core.Verify;
 /// <summary>Runs the verify sweep. An interface so `clean` can be tested without a server.</summary>
 public interface IVerifier
 {
-    Task<VerifyReport> VerifyAsync(DatabaseSchema schema, CancellationToken cancellationToken = default);
+    /// <param name="knownReplacements">
+    /// The exact values this run wrote via `static`. Without them the sweep
+    /// reports correctly masked columns as leaks — see PlaceholderRules.
+    /// </param>
+    Task<VerifyReport> VerifyAsync(
+        DatabaseSchema schema,
+        IReadOnlySet<string> knownReplacements,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -41,6 +48,7 @@ public sealed class SqlVerifier(string connectionString) : IVerifier
 
     public async Task<VerifyReport> VerifyAsync(
         DatabaseSchema schema,
+        IReadOnlySet<string> knownReplacements,
         CancellationToken cancellationToken = default)
     {
         await using var connection = new SqlConnection(connectionString);
@@ -63,7 +71,8 @@ public sealed class SqlVerifier(string connectionString) : IVerifier
             foreach (var column in table.Columns.Where(c => c.IsTextual))
             {
                 columnsScanned++;
-                rowsInspected += await ScanColumnAsync(connection, table, column, hits, cancellationToken);
+                rowsInspected += await ScanColumnAsync(
+                    connection, table, column, knownReplacements, hits, cancellationToken);
             }
         }
 
@@ -75,6 +84,7 @@ public sealed class SqlVerifier(string connectionString) : IVerifier
         SqlConnection connection,
         SchemaTable table,
         SchemaColumn column,
+        IReadOnlySet<string> knownReplacements,
         List<VerifyHit> hits,
         CancellationToken cancellationToken)
     {
@@ -116,7 +126,7 @@ public sealed class SqlVerifier(string connectionString) : IVerifier
                 // Masked output first: a scrambled SSN matches the SSN pattern
                 // exactly, and treating it as a hit would mean no correctly
                 // scrubbed database could ever be stamped.
-                if (PlaceholderRules.IsMaskedOutput(value))
+                if (PlaceholderRules.IsMaskedOutput(value, knownReplacements))
                 {
                     continue;
                 }

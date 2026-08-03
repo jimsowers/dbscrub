@@ -132,6 +132,36 @@ public static class MaskPlanner
                 // column; nothing type-dependent is left to decide.
                 return new MaskColumn(column, ColumnStrategy.Null, Value: null);
 
+            case ColumnStrategy.Email:
+                // The tool generates the address, so it knows the shape and can
+                // recognise it later — which is the whole reason this is a
+                // strategy rather than a `static` value (DECISIONS.md D26).
+                if (!column.IsTextual)
+                {
+                    problems.Add(Problem(
+                        path,
+                        $"{reportAs}.{column.Name} is {column.DataType}, which cannot hold an email address.",
+                        "\"email\" writes text. Use \"null\" or \"static\" for a non-text column."));
+                    return null;
+                }
+
+                if (!RequireKey(table, column, "\"email\"",
+                        "give every row a different address", path, problems))
+                {
+                    return null;
+                }
+
+                if (!RequireWidth(table, column,
+                        FakeEmail.RequiredCharacters(RowDiscriminator.MaxWidth(table.KeyColumns)),
+                        $"an address like {FakeEmail.For("15")}",
+                        "Use \"scramble\", or \"static\" with a short placeholder.",
+                        path, reportAs, problems))
+                {
+                    return null;
+                }
+
+                return new MaskColumn(column, ColumnStrategy.Email, Value: null);
+
             case ColumnStrategy.Scramble:
                 if (!column.IsTextual)
                 {
@@ -147,7 +177,24 @@ public static class MaskPlanner
                     return null;
                 }
 
-                return new MaskColumn(column, ColumnStrategy.Scramble, Value: null);
+                if (verdict.Unique == UniqueMode.Key)
+                {
+                    // The discriminator overwrites the tail, so a value can
+                    // always hold it — UNLESS the whole column is narrower than
+                    // the widest key the table could produce, in which case the
+                    // result would be truncated mid-run.
+                    if (!RequireKey(table, column, "\"unique\": \"key\"",
+                            "give every row a different value", path, problems)
+                        || !RequireWidth(table, column, RowDiscriminator.MaxWidth(table.KeyColumns),
+                            "a row key on the end of each value",
+                            "Drop \"unique\", or widen the column.",
+                            path, reportAs, problems))
+                    {
+                        return null;
+                    }
+                }
+
+                return new MaskColumn(column, ColumnStrategy.Scramble, Value: null, verdict.Unique);
 
             case ColumnStrategy.Static:
                 if (verdict.Value is not { } configured)
@@ -222,6 +269,67 @@ public static class MaskPlanner
         }
 
         return new TableMaskPlan(table, columns, MaskMode.RowByRow);
+    }
+
+    /// <summary>
+    /// A strategy that varies per row has to be able to ADDRESS a row, and that
+    /// means a primary key. Same refusal shape as scramble's (DECISIONS.md D19).
+    /// </summary>
+    private static bool RequireKey(
+        SchemaTable table,
+        SchemaColumn column,
+        string what,
+        string purpose,
+        string path,
+        List<ConfigError> problems)
+    {
+        if (table.HasPrimaryKey)
+        {
+            return true;
+        }
+
+        problems.Add(Problem(
+            path,
+            $"{table.QualifiedName}.{column.Name} uses {what}, which needs a primary key.",
+            $"To {purpose}, dbscrub seeds each row's value from its primary key — and this table has "
+            + "none, so there is nothing to seed from. Add a primary key, or use a strategy that "
+            + "writes the same value everywhere (\"static\", \"null\")."));
+
+        return false;
+    }
+
+    /// <summary>
+    /// Refuses a column too narrow to hold what the strategy would write.
+    ///
+    /// Computed from the key's declared TYPES, not from any row, so it is a
+    /// plan-time refusal rather than SQL Server error 8152 partway through a
+    /// run — the same reasoning as the `static` length check.
+    /// </summary>
+    private static bool RequireWidth(
+        SchemaTable table,
+        SchemaColumn column,
+        int required,
+        string what,
+        string fix,
+        string path,
+        string reportAs,
+        List<ConfigError> problems)
+    {
+        var available = column.MaxLengthInCharacters;
+
+        if (available is null || available >= required)
+        {
+            return true;
+        }
+
+        problems.Add(Problem(
+            path,
+            $"{reportAs}.{column.Name} is {column.DataType}({available}), too narrow for {what}. "
+            + $"It needs at least {required} characters, because {table.QualifiedName}'s primary key "
+            + $"can be up to {RowDiscriminator.MaxWidth(table.KeyColumns)} characters wide.",
+            fix));
+
+        return false;
     }
 
     private static SchemaTable? FindHistoryTable(ScrubPlan plan, TablePlan table) =>

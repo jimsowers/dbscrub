@@ -20,6 +20,27 @@ public sealed record MaskPlan(
     public bool CanRun => Problems.Count == 0;
 
     public int ColumnCount => Tables.Sum(t => t.Columns.Count);
+
+    /// <summary>
+    /// Every exact value this run will write via `static`, for the verify gate.
+    ///
+    /// The gate cannot work these out for itself. A replacement is chosen to be
+    /// a plausible-looking stand-in — "dev@example.invalid" is email-shaped
+    /// deliberately — so by shape alone it is indistinguishable from the real
+    /// thing it replaces. Handing verify the list is what stops it reporting a
+    /// correctly masked column as a leak.
+    ///
+    /// Ordinal comparison: these came from this tool, so an exact match is the
+    /// only safe test. Anything looser starts excusing values it did not write.
+    /// </summary>
+    public IReadOnlySet<string> ReplacementValues =>
+        Tables
+            .SelectMany(t => t.Columns)
+            .Where(c => c.Strategy == ColumnStrategy.Static)
+            .Select(c => c.Value?.ToString())
+            .OfType<string>()
+            .Where(v => v.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
 }
 
 /// <summary>One table's masking work.</summary>
@@ -41,6 +62,15 @@ public sealed record TableMaskPlan(
     /// </summary>
     public IReadOnlyList<MaskColumn> ComputedColumns =>
         Columns.Where(c => !c.IsConstant).ToList();
+
+    /// <summary>
+    /// The columns the batch SELECT has to fetch, in order. A subset of
+    /// <see cref="ComputedColumns"/>: an `email` column is computed per row but
+    /// its old value is never needed, so reading it would drag personal data
+    /// across the wire for nothing.
+    /// </summary>
+    public IReadOnlyList<MaskColumn> ReadColumns =>
+        Columns.Where(c => c.NeedsCurrentValue).ToList();
 
     /// <summary>The columns whose new value is the same for every row: `null` and `static`.</summary>
     public IReadOnlyList<MaskColumn> ConstantColumns =>
@@ -87,12 +117,28 @@ public enum MaskMode
 public sealed record MaskColumn(
     SchemaColumn Column,
     ColumnStrategy Strategy,
-    object? Value)
+    object? Value,
+    UniqueMode Unique = UniqueMode.None)
 {
     public string Name => Column.Name;
 
-    /// <summary>True when the replacement does not depend on the row's current value.</summary>
-    public bool IsConstant => Strategy is ColumnStrategy.Null or ColumnStrategy.Static;
+    /// <summary>
+    /// True when the replacement is the same on every row, so the column needs
+    /// neither a read nor a per-row parameter. `scramble` with `unique` is NOT
+    /// constant, even though plain `static` is.
+    /// </summary>
+    public bool IsConstant =>
+        (Strategy is ColumnStrategy.Null or ColumnStrategy.Static) && Unique == UniqueMode.None;
+
+    /// <summary>
+    /// True when computing the new value requires reading the OLD one. Only
+    /// `scramble` does — `email` builds its value from the key alone, so its
+    /// column never crosses the wire.
+    /// </summary>
+    public bool NeedsCurrentValue => Strategy == ColumnStrategy.Scramble;
+
+    /// <summary>True when the new value is built from the row's primary key.</summary>
+    public bool NeedsRowKey => Strategy == ColumnStrategy.Email || Unique == UniqueMode.Key;
 
     public override string ToString() => $"{Name} [{Strategy}]";
 }

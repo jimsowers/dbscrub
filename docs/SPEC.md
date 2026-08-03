@@ -169,6 +169,9 @@ Progress output per table (rows done / total).
   exit 2, no stamp, no rename.
 
 ### 5.5 Stamp + rename
+The stamp is BUILT. The rename is DEFERRED indefinitely (DECISIONS.md D25):
+nothing uses it, and it is the most destructive code in the tool. Kept here
+because the v1 quarantine pipeline needs it.
 - Write extended property `Sanitized = true`, `SanitizedUtc`, `ConfigHash`
   (SHA-256 of the config file) and insert a row into `dbo.__SanitizationLog`
   (created if missing): run timestamp, tool version, config hash, tables
@@ -187,6 +190,8 @@ Progress output per table (rows done / total).
   case drop it first.
 
 ### 5.6 Repair orphaned SQL users (skipped when `repairUsers` is empty)
+DEFERRED indefinitely (DECISIONS.md D25) — the team restore script already owns
+login and user setup, so `repairUsers` is empty for AAVSB and this never fires.
 For each user in `repairUsers`: a restored `.bak` carries the database USER
 but maps it to the production login's SID, which doesn't exist locally
 ("orphaned user" — SQL-auth logins fail after every fresh restore). If a
@@ -208,6 +213,7 @@ container, where the team script won't run.
 
 ## 7. v0 definition of done
 
+- Rename and orphaned-user repair are NOT part of v0 (DECISIONS.md D25).
 - `report` and `clean` work end-to-end against a local SQL Server 2019+ with a
   config covering: null, static, scramble, keep, table truncate, a temporal
   table, and a CDC-enabled database.

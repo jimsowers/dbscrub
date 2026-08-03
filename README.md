@@ -39,8 +39,9 @@ Jekyll, which would otherwise treat `SPEC.md` and friends as blog posts.
 > so `dbscrub status` can never call a database safe on the strength of a run
 > that didn't check.
 >
-> Still to come: renaming the database after a clean, and reconnecting restored
-> users to local logins.
+> Renaming the database after a clean, and reconnecting restored users to local
+> logins, are deliberately not built — nothing uses them, and rename is the most
+> destructive thing this tool could do.
 
 ---
 
@@ -321,13 +322,13 @@ key, so there is no way to address one of its rows — and that is what `scrambl
 needs. If you hit that refusal, the answer is the default: `truncate`. Old
 history rows are worth very little in a dev database.
 
-**Two keys are parsed but not yet acted on**, because the steps that use them
-are still being built. Setting them today does nothing:
+**Two keys are parsed but not acted on.** Both are deliberately deferred, not
+unfinished. Setting them today does nothing:
 
 | Key | Will do | Blocked on |
 |---|---|---|
-| `renameTo` | Rename the database after a clean run | Renaming is only allowed after a verification pass |
-| `repairUsers` | Reconnect restored database users to your local logins | Same step |
+| `renameTo` | Rename the database after a clean run | Deferred — nothing uses it, and it is the most destructive code in the tool |
+| `repairUsers` | Reconnect restored database users to your local logins | Deferred — your restore script already does this |
 
 ### Comments
 
@@ -455,8 +456,11 @@ Built and working: config validation, schema inventory, the report, the safety
 checks, the hygiene pass, the mask engine, the verification sweep, and the
 `Sanitized` mark.
 
-Not built yet: database rename after a clean run (`renameTo`, `--rename-to`,
-`--replace`) and orphaned-user repair (`repairUsers`).
+Deliberately not built: database rename after a clean run (`renameTo`,
+`--rename-to`, `--replace`) and orphaned-user repair (`repairUsers`). Nothing
+uses either — cleaning happens in place, and your restore script already sets up
+logins — and rename is the most destructive code the tool could contain. They
+stay designed and unbuilt until something actually needs them.
 
 ---
 

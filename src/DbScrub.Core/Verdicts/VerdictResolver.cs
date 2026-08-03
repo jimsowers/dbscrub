@@ -161,6 +161,7 @@ public static class VerdictResolver
                 table.Schema, table.Name, column.Name, kind, columnConfig.Strategy, columnConfig.Reason)
             {
                 Value = columnConfig.Value,
+                Unique = columnConfig.Unique,
             });
         }
 
