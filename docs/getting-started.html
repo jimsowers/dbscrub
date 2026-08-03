@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DbScrub — Getting Started</title>
+<meta name="description" content="How to run DbScrub, and how the code works. One page.">
+<style>
+:root {
+  --bg: #f6f8fb;
+  --card: #ffffff;
+  --card-2: #eef2f8;
+  --border: #d8e0ec;
+  --text: #16243a;
+  --muted: #5a6b85;
+  --teal: #0d9488;
+  --amber: #b45309;
+  --red: #be123c;
+  --violet: #6d28d9;
+  --shadow: 0 1px 2px rgba(22, 36, 58, .06), 0 8px 24px rgba(22, 36, 58, .06);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1726;
+    --card: #16243a;
+    --card-2: #1c2d47;
+    --border: #27395480;
+    --text: #e6edf7;
+    --muted: #94a6c2;
+    --teal: #2dd4bf;
+    --amber: #fbbf24;
+    --red: #fb7185;
+    --violet: #a78bfa;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+  }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 5rem; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 1.25rem 6rem; }
+
+/* ---------- header ---------- */
+header.hero { padding: 4rem 0 2rem; }
+.eyebrow {
+  font-family: var(--mono); font-size: .75rem; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 .75rem;
+}
+h1 { font-size: clamp(2.5rem, 6vw, 3.75rem); line-height: 1.05; margin: 0 0 .5rem; letter-spacing: -.03em; }
+.tagline { font-size: clamp(1.1rem, 2.5vw, 1.375rem); color: var(--muted); margin: 0 0 1.5rem; max-width: 46ch; }
+.facts { display: flex; flex-wrap: wrap; gap: .5rem; }
+.fact {
+  font-family: var(--mono); font-size: .8125rem; padding: .3rem .7rem;
+  border: 1px solid var(--border); border-radius: 999px; color: var(--muted); background: var(--card);
+}
+
+/* ---------- nav ---------- */
+nav.toc {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3rem;
+}
+nav.toc ul { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; list-style: none; margin: 0 auto; padding: .85rem 1.25rem; max-width: 1080px; }
+nav.toc a { color: var(--muted); text-decoration: none; font-size: .875rem; font-weight: 500; }
+nav.toc a:hover { color: var(--text); }
+
+/* ---------- banner ---------- */
+.banner {
+  border: 1px solid var(--border); border-left: 4px solid var(--amber);
+  background: var(--card); border-radius: 10px; padding: 1.1rem 1.25rem; margin: 2rem 0 0;
+  box-shadow: var(--shadow);
+}
+.banner h2 { font-size: 1rem; margin: 0 0 .35rem; color: var(--amber); }
+.banner p { margin: 0; color: var(--muted); font-size: .9375rem; }
+.banner p + p { margin-top: .5rem; }
+
+/* ---------- sections ---------- */
+section { padding-top: 3.5rem; }
+.part-label {
+  font-family: var(--mono); font-size: .75rem; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--teal); margin: 0 0 .4rem;
+}
+.part-label.arch { color: var(--violet); }
+h2.part { font-size: clamp(1.75rem, 4vw, 2.25rem); margin: 0 0 .5rem; letter-spacing: -.02em; }
+.part-sub { color: var(--muted); margin: 0 0 2rem; max-width: 62ch; }
+h3 { font-size: 1.25rem; margin: 2.5rem 0 1rem; letter-spacing: -.01em; }
+.divider { height: 1px; background: var(--border); border: 0; margin: 4rem 0 0; }
+
+/* ---------- steps ---------- */
+ol.steps { list-style: none; margin: 0; padding: 0; position: relative; }
+ol.steps::before {
+  content: ""; position: absolute; left: 17px; top: 24px; bottom: 24px;
+  width: 2px; background: var(--border);
+}
+li.step { position: relative; padding: 0 0 1.5rem 3.25rem; }
+.num {
+  position: absolute; left: 0; top: 0; width: 36px; height: 36px; border-radius: 50%;
+  background: var(--card); border: 2px solid var(--border); color: var(--muted);
+  display: grid; place-items: center; font-family: var(--mono); font-size: .875rem; font-weight: 600;
+}
+li.step.safe .num { border-color: var(--teal); color: var(--teal); }
+li.step.danger .num { border-color: var(--red); color: var(--red); }
+.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin: .25rem 0 .35rem; }
+.step-head h4 { font-size: 1.0625rem; margin: 0; letter-spacing: -.01em; }
+.step p { margin: 0 0 .75rem; color: var(--muted); font-size: .9375rem; max-width: 66ch; }
+.pill {
+  font-family: var(--mono); font-size: .6875rem; letter-spacing: .08em; text-transform: uppercase;
+  padding: .2rem .55rem; border-radius: 4px; font-weight: 600; white-space: nowrap;
+}
+.pill.safe { color: var(--teal); background: color-mix(in srgb, var(--teal) 14%, transparent); }
+.pill.danger { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); }
+.pill.opt { color: var(--muted); background: var(--card-2); }
+
+/* ---------- code ---------- */
+.code {
+  position: relative; background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; margin: 0 0 .6rem; box-shadow: var(--shadow);
+}
+.code pre { margin: 0; padding: .8rem 3.5rem .8rem 1rem; overflow-x: auto; }
+.code code { font-family: var(--mono); font-size: .84rem; line-height: 1.7; white-space: pre; }
+.copy {
+  position: absolute; top: .5rem; right: .5rem; border: 1px solid var(--border);
+  background: var(--card-2); color: var(--muted); border-radius: 6px;
+  font-family: var(--sans); font-size: .72rem; padding: .25rem .55rem; cursor: pointer;
+}
+.copy:hover { color: var(--text); }
+.copy.done { color: var(--teal); border-color: var(--teal); }
+code.inline {
+  font-family: var(--mono); font-size: .875em; background: var(--card-2);
+  padding: .12em .4em; border-radius: 4px; border: 1px solid var(--border);
+}
+
+/* ---------- generic cards / grids ---------- */
+.grid { display: grid; gap: 1rem; }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 1.1rem 1.25rem; box-shadow: var(--shadow);
+}
+.card h4 { margin: 0 0 .4rem; font-size: 1rem; letter-spacing: -.01em; }
+.card p { margin: 0; color: var(--muted); font-size: .9rem; }
+.card .mono-list { margin: .75rem 0 0; padding: .7rem .85rem; background: var(--card-2); border-radius: 6px; }
+.card .mono-list span { display: block; font-family: var(--mono); font-size: .8125rem; color: var(--violet); }
+
+/* ---------- table ---------- */
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+th { text-align: left; font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+th, td { padding: .7rem 1.1rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+tbody tr:last-child td { border-bottom: 0; }
+td.code-cell { font-family: var(--mono); font-size: .8125rem; white-space: nowrap; }
+td.num-cell { font-family: var(--mono); font-weight: 600; width: 1%; }
+
+/* ---------- pipeline ---------- */
+.pipeline { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.stage {
+  background: var(--card); border: 1px solid var(--border); border-top: 3px solid var(--violet);
+  border-radius: 10px; padding: 1rem; box-shadow: var(--shadow);
+}
+.stage .n { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
+.stage h4 { margin: .15rem 0 .35rem; font-size: .9375rem; }
+.stage p { margin: 0 0 .7rem; font-size: .8125rem; color: var(--muted); }
+.stage .classes { border-top: 1px solid var(--border); padding-top: .6rem; }
+.stage .classes span { display: block; font-family: var(--mono); font-size: .78rem; color: var(--violet); }
+.stage.exec { border-top-color: var(--red); }
+.stage.exec .classes span { color: var(--red); }
+
+/* ---------- callouts ---------- */
+.callout {
+  border: 1px solid var(--border); border-left: 4px solid var(--teal); background: var(--card);
+  border-radius: 10px; padding: 1rem 1.25rem; margin-top: 1rem; box-shadow: var(--shadow);
+}
+.callout.warn { border-left-color: var(--amber); }
+.callout strong { color: var(--text); }
+.callout p { margin: 0; color: var(--muted); font-size: .9375rem; }
+.callout h4 { margin: 0 0 .35rem; font-size: .9375rem; }
+
+/* ---------- phases ---------- */
+.phases { display: grid; gap: .75rem; grid-template-columns: 1fr; }
+@media (min-width: 800px) { .phases { grid-template-columns: 1.2fr 1fr 1.2fr; } }
+.phase { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.15rem; box-shadow: var(--shadow); }
+.phase .tag { font-family: var(--mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.phase h4 { margin: .2rem 0 .15rem; font-size: 1rem; }
+.phase .who { font-family: var(--mono); font-size: .76rem; color: var(--violet); margin-bottom: .6rem; display: block; word-break: break-word; }
+.phase ul { margin: 0; padding-left: 1.1rem; }
+.phase li { font-size: .85rem; color: var(--muted); margin-bottom: .2rem; }
+.phase.mask { border-color: var(--red); }
+.phase.mask .who { color: var(--red); }
+
+/* ---------- strategy table ---------- */
+td .strat { font-family: var(--mono); font-weight: 600; }
+.s-static { color: var(--teal); }
+.s-scramble { color: var(--violet); }
+.s-null { color: var(--amber); }
+.s-keep { color: var(--muted); }
+
+footer {
+  margin-top: 4rem; padding-top: 2rem; border-top: 1px solid var(--border);
+  color: var(--muted); font-size: .875rem;
+}
+footer p { margin: 0 0 .4rem; }
+
+@media print {
+  nav.toc { display: none; }
+  body { background: #fff; color: #000; }
+  .card, .code, .stage, .phase, .callout, .banner, .table-wrap { box-shadow: none; break-inside: avoid; }
+  section { break-inside: avoid; }
+  .copy { display: none; }
+}
+</style>
+</head>
+<body>
+
+<nav class="toc">
+  <ul>
+    <li><a href="#run">Running it</a></li>
+    <li><a href="#exit">Exit codes</a></li>
+    <li><a href="#rails">Safety rails</a></li>
+    <li><a href="#how">How it works</a></li>
+    <li><a href="#pipeline">The pipeline</a></li>
+    <li><a href="#phases">A clean run</a></li>
+    <li><a href="#modes">Mask modes</a></li>
+    <li><a href="#strategies">Strategies</a></li>
+  </ul>
+</nav>
+
+<div class="wrap">
+
+<header class="hero">
+  <p class="eyebrow">Getting started</p>
+  <h1>DbScrub</h1>
+  <p class="tagline">Replace real personal data in a locally restored SQL&nbsp;Server database with obvious fakes — so daily development never touches real people's information.</p>
+  <div class="facts">
+    <span class="fact">.NET 8</span>
+    <span class="fact">SQL Server 2019+</span>
+    <span class="fact">localhost only</span>
+    <span class="fact">no ORM</span>
+    <span class="fact">323 unit tests</span>
+  </div>
+
+  <div class="banner">
+    <h2>Read this before you rely on it</h2>
+    <p><code class="inline">clean</code> masks data, but it does <strong>not</strong> yet mark the database as cleaned. The verification step that earns that mark is still being built, and nothing may call a database safe without it.</p>
+    <p>So <code class="inline">dbscrub status</code> keeps answering <em>“not clean”</em> even after a completely successful <code class="inline">clean</code>. That is the honest answer, not a bug.</p>
+  </div>
+</header>
+
+<!-- ============================ PART 1 ============================ -->
+<section id="run">
+  <p class="part-label">Part 1</p>
+  <h2 class="part">Running it</h2>
+  <p class="part-sub">Eight steps from a fresh clone to a masked database. Steps 4 and 6 only ever read — you can run them as often as you like while you get the config right.</p>
+
+  <ol class="steps">
+
+    <li class="step">
+      <span class="num">1</span>
+      <div class="step-head"><h4>Build it</h4></div>
+      <p>You need the .NET 8 runtime and a SQL Server running on your own machine, using Windows authentication. <code class="inline">report</code> and <code class="inline">status</code> only need to read the database structure; <code class="inline">clean</code> also writes to the tables it masks and runs <code class="inline">ALTER DATABASE</code> and <code class="inline">ALTER TABLE</code> — in practice, <code class="inline">db_owner</code> on the copy.</p>
+      <div class="code"><pre><code>dotnet build</code></pre></div>
+    </li>
+
+    <li class="step">
+      <span class="num">2</span>
+      <div class="step-head"><h4>Make a practice database</h4><span class="pill opt">Optional</span></div>
+      <p>Builds <code class="inline">DbScrubTest</code>, a small database full of fake data shaped like the real thing — a temporal table, change tracking, an audit table, and a table with no primary key. It drops and recreates, so it is also how you get back to a known state after a run.</p>
+      <div class="code"><pre><code>sqlcmd -S "localhost\MSSQLSERVER02" -E -i scripts\create-test-db.sql</code></pre></div>
+    </li>
+
+    <li class="step">
+      <span class="num">3</span>
+      <div class="step-head"><h4>Write a config</h4></div>
+      <p>One JSON file describing what to do with each column. Start with almost nothing — step 4 will tell you what to add.</p>
+      <div class="code"><pre><code>{
+  "defaults": { "allowedServers": ["localhost"] },
+  "tables": []
+}</code></pre></div>
+    </li>
+
+    <li class="step safe">
+      <span class="num">4</span>
+      <div class="step-head"><h4>Ask what would happen</h4><span class="pill safe">Read only</span></div>
+      <p>Reads the database, compares it to your config, and prints the plan: which tables get emptied, which columns get masked and how, and everything still unclassified. Changes nothing.</p>
+      <div class="code"><pre><code>dbscrub report --server localhost --database MyDb --config my-config.json</code></pre></div>
+    </li>
+
+    <li class="step safe">
+      <span class="num">5</span>
+      <div class="step-head"><h4>Paste the answer back, then repeat step 4</h4></div>
+      <p>The report ends with every column nobody has classified yet, already formatted as JSON. Paste it into your config, change <code class="inline">keep</code> to a real strategy wherever the column actually holds personal data, and run <code class="inline">report</code> again. Repeat until the unclassified list is empty.</p>
+      <p><strong>This loop is the intended way to build a config.</strong> Nobody can list every column in a production database from memory.</p>
+    </li>
+
+    <li class="step safe">
+      <span class="num">6</span>
+      <div class="step-head"><h4>Dry run</h4><span class="pill safe">Read only</span></div>
+      <p>The same plan, but reached through <code class="inline">clean</code>'s own safety checks — so it also proves the server allowlist and the config would let a real run start. Never prompts, so it is safe inside a script.</p>
+      <div class="code"><pre><code>dbscrub clean --server localhost --database MyDb --config my-config.json --dry-run</code></pre></div>
+    </li>
+
+    <li class="step danger">
+      <span class="num">7</span>
+      <div class="step-head"><h4>Clean it</h4><span class="pill danger">Modifies data</span></div>
+      <p>Prints the plan, then asks you to type the database name exactly before it changes anything. Add <code class="inline">--yes</code> to skip the prompt — allowed only on <code class="inline">localhost</code>, <code class="inline">.</code> or <code class="inline">127.0.0.1</code>, with or without an instance name.</p>
+      <div class="code"><pre><code>dbscrub clean --server localhost --database MyDb --config my-config.json</code></pre></div>
+      <p>Add <code class="inline">--fail-on-unclassified</code> to refuse to run while any column still has no verdict, whatever the config says. There is deliberately no flag that loosens it.</p>
+    </li>
+
+    <li class="step">
+      <span class="num">8</span>
+      <div class="step-head"><h4>Check it</h4><span class="pill safe">Read only</span></div>
+      <p>Answers “has this database been cleaned?” so scripts and build steps can branch on the exit code. <code class="inline">--config</code> is optional here and is read only for the list of allowed servers — you need it if your SQL Server is a named instance.</p>
+      <div class="code"><pre><code>dbscrub status --server localhost --database MyDb</code></pre></div>
+    </li>
+
+  </ol>
+
+  <div class="callout">
+    <h4>Running it without installing anything</h4>
+    <p>Every <code class="inline">dbscrub</code> above can be run straight from the repo as
+    <code class="inline">dotnet run --project src/DbScrub.Cli -- report --server …</code>, or from the build output at
+    <code class="inline">src\DbScrub.Cli\bin\Debug\net8.0\dbscrub.exe</code>.</p>
+  </div>
+</section>
+
+<hr class="divider">
+
+<section id="exit">
+  <h3>Exit codes</h3>
+  <p class="part-sub">These are a contract — CI depends on them, so they are never renumbered, only added to.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td class="num-cell">0</td><td>Success. For <code class="inline">status</code>, the database is clean. For <code class="inline">clean</code>, also returned when the database was already clean and was skipped</td></tr>
+        <tr><td class="num-cell">1</td><td>Something unexpected went wrong — including a run that failed partway, or one that could not rewrite every row</td></tr>
+        <tr><td class="num-cell">2</td><td>For <code class="inline">status</code>, the database is not clean. Reserved for “verification found personal data” once that step exists</td></tr>
+        <tr><td class="num-cell">3</td><td>Unclassified columns while set to fail, or <code class="inline">clean --fail-on-unclassified</code></td></tr>
+        <tr><td class="num-cell">4</td><td>A safety check refused: server not on the allowed list, wrong database name typed, or <code class="inline">--yes</code> used on a server that is not unambiguously local</td></tr>
+        <tr><td class="num-cell">5</td><td>The config is invalid, <strong>or</strong> it asks for something the schema cannot do — a <code class="inline">static</code> value that will not fit, a <code class="inline">scramble</code> on a table with no primary key, a column that no longer exists</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="rails">
+  <h3>Four things that stop a run</h3>
+  <p class="part-sub">DbScrub is designed on the assumption that someone will eventually point it at the wrong database. Each of these refuses <em>before</em> anything is modified.</p>
+  <div class="grid g2">
+    <div class="card">
+      <h4>The server is not on your allowlist</h4>
+      <p>Every command checks <code class="inline">allowedServers</code> before opening a connection. There is no override flag and no environment variable — if you need another server you edit the config, and that edit shows up in a diff. Matching is exact: <code class="inline">localhost</code> does not cover <code class="inline">localhost\SQL2022</code>.</p>
+    </div>
+    <div class="card">
+      <h4>The database was already cleaned</h4>
+      <p>Skipped rather than cleaned twice, and it exits 0 — so a wrapper script that re-runs it carries on instead of failing.</p>
+    </div>
+    <div class="card">
+      <h4>You typed the wrong name</h4>
+      <p>The allowlist catches the wrong <em>machine</em>. Typing the database name catches the wrong <em>database</em> on a machine that is legitimately allowed. Pressing a key is muscle memory; reproducing a name from the summary is not.</p>
+    </div>
+    <div class="card">
+      <h4>Rows were left unmasked</h4>
+      <p>Each table's row count is taken before the rewrite and compared afterwards. If they disagree, rows kept their real values — so the run reports <em>failure</em>, because a skipped row is otherwise completely silent.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- ============================ PART 2 ============================ -->
+<section id="how">
+  <p class="part-label arch">Part 2</p>
+  <h2 class="part">How it works</h2>
+  <p class="part-sub">Everything below is decided, printed and approved before a single row changes. That separation is the design, not an implementation detail — it is what makes the plan reviewable and the whole thing testable without a database.</p>
+
+  <h3>Three projects</h3>
+  <div class="grid g3">
+    <div class="card">
+      <h4>DbScrub.Cli</h4>
+      <p>Command wiring, console output, exit codes. A thin shell — it makes no decisions.</p>
+      <div class="mono-list">
+        <span>Program.cs</span><span>ReportCommand</span><span>StatusCommand</span><span>CleanCommand</span><span>ExitCode</span>
+      </div>
+    </div>
+    <div class="card">
+      <h4>DbScrub.Core</h4>
+      <p>Every decision lives here. No console, no assumptions about who is calling.</p>
+      <div class="mono-list">
+        <span>Configuration/</span><span>Safety/</span><span>Schema/</span><span>Verdicts/</span><span>Masking/</span><span>Hygiene/</span><span>Planning/</span><span>Execution/</span><span>Reporting/</span><span>Stamp/</span>
+      </div>
+    </div>
+    <div class="card">
+      <h4>DbScrub.Tests</h4>
+      <p>323 unit tests, none of which need a database. Fakes stand in for the schema reader and for the one type that writes.</p>
+      <div class="mono-list">
+        <span>SchemaBuilder</span><span>MaskSqlTests</span><span>CleanRunnerTests</span><span>CleanCommandTests</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="pipeline">
+  <h3>The pipeline</h3>
+  <p class="part-sub">Six stages. The first five are pure — same inputs, same answer, no database, no clock. Only the sixth changes anything.</p>
+
+  <div class="pipeline">
+    <div class="stage">
+      <span class="n">Stage 1</span>
+      <h4>Load config</h4>
+      <p>Reads the JSON, rejects unknown keys as errors, and points at the exact line. A misspelled key would otherwise mask nothing, silently.</p>
+      <div class="classes"><span>MaskingConfigLoader</span><span>MaskingConfig</span><span>ConfigError</span></div>
+    </div>
+    <div class="stage">
+      <span class="n">Stage 2</span>
+      <h4>Safety checks</h4>
+      <p>Refuses the wrong machine, the wrong database, and a database that is already clean — all before a socket is opened.</p>
+      <div class="classes"><span>ServerAllowlist</span><span>TypedConfirmation</span><span>StampReader</span></div>
+    </div>
+    <div class="stage">
+      <span class="n">Stage 3</span>
+      <h4>Read the schema</h4>
+      <p>The one place <code class="inline">sys.*</code> is queried: tables, columns, temporal and CDC flags, and primary keys in key order.</p>
+      <div class="classes"><span>SchemaInventory</span><span>DatabaseSchema</span><span>SchemaTable</span><span>SchemaColumn</span></div>
+    </div>
+    <div class="stage">
+      <span class="n">Stage 4</span>
+      <h4>Decide</h4>
+      <p>Projects the config onto the live schema. Every column resolves to a verdict, or it is reported as UNCLASSIFIED.</p>
+      <div class="classes"><span>VerdictResolver</span><span>ScrubPlan</span><span>TablePlan</span><span>ColumnVerdict</span></div>
+    </div>
+    <div class="stage">
+      <span class="n">Stage 5</span>
+      <h4>Plan</h4>
+      <p>What to empty, what to rewrite, in what order, and with exactly which SQL. This is what <code class="inline">report</code> prints.</p>
+      <div class="classes"><span>CleanPlan</span><span>HygienePlanner</span><span>MaskPlanner</span><span>MaskSql</span><span>PlanReport</span></div>
+    </div>
+    <div class="stage exec">
+      <span class="n">Stage 6</span>
+      <h4>Execute</h4>
+      <p>The only code in the repository that sends a modifying statement. One connection for the whole run.</p>
+      <div class="classes"><span>CleanRunner</span><span>ICleanSession</span><span>SqlCleanSession</span></div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <h4>Why it is split this way</h4>
+    <p>Stages 1–5 never touch the database, so the entire plan is a pure function of <em>(schema, config)</em>. That is what lets <code class="inline">report</code> show you the real statements rather than a paraphrase, and what lets every one of them be asserted in a unit test. <strong>A problem found at plan time stops a run; the same problem found mid-run leaves a database that is neither raw nor clean.</strong></p>
+  </div>
+</section>
+
+<section id="phases">
+  <h3>What a clean run actually does</h3>
+  <p class="part-sub">Three phases. The first and third are the same operation, deliberately pulled apart so that masking happens in between.</p>
+
+  <div class="phases">
+    <div class="phase">
+      <span class="tag">Phase 1 — before</span>
+      <h4>Hygiene</h4>
+      <span class="who">HygienePlanner.BuildPreMask</span>
+      <ul>
+        <li>Set the database to SIMPLE recovery</li>
+        <li>Disable change data capture</li>
+        <li>Turn <strong>OFF</strong> system versioning</li>
+        <li>Empty temporal history tables, unless the config asks for them to be masked instead</li>
+        <li>Empty tables marked <code class="inline">truncate</code></li>
+      </ul>
+    </div>
+    <div class="phase mask">
+      <span class="tag">Phase 2</span>
+      <h4>Masking</h4>
+      <span class="who">CleanRunner → SqlCleanSession</span>
+      <ul>
+        <li>Rewrite every configured column</li>
+        <li>In batches, one transaction each</li>
+        <li>Row counts reconciled per table</li>
+      </ul>
+    </div>
+    <div class="phase">
+      <span class="tag">Phase 3 — after</span>
+      <h4>Hygiene</h4>
+      <span class="who">HygienePlanner.BuildPostMask</span>
+      <ul>
+        <li>Turn system versioning back <strong>ON</strong></li>
+        <li>Runs even if masking failed or was cancelled — a table left detached silently records no history, and nothing about the database looks wrong</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <h4>Why phases 1 and 3 are not adjacent</h4>
+    <p>While system versioning is ON, every <code class="inline">UPDATE</code> copies the row's <em>old</em> value into a hidden history table. Masking with versioning on would not clean the database — it would move the real data somewhere less obvious and then report success. So versioning is turned off in phase 1 and only restored in phase 3. There is deliberately no method that returns both phases in one list.</p>
+  </div>
+</section>
+
+<section id="modes">
+  <h3>Three ways a table gets rewritten</h3>
+  <p class="part-sub">Chosen per table by <code class="inline">MaskPlanner</code>, never by the executor. The deciding question is whether any new value depends on the row's current value.</p>
+  <div class="grid g3">
+    <div class="card">
+      <h4>Row by row</h4>
+      <p>Used when any column is <code class="inline">scramble</code>. Walks the table in primary key order in batches, computes each new value in memory, and writes the batch back addressing each row by its key.</p>
+      <div class="mono-list"><span>MaskMode.RowByRow</span></div>
+    </div>
+    <div class="card">
+      <h4>Batched constant</h4>
+      <p>Every new value is the same and the table has a primary key. One set-based <code class="inline">UPDATE</code> per key range, and no rows are read at all — the walk exists only to keep each transaction small.</p>
+      <div class="mono-list"><span>MaskMode.BatchedConstant</span></div>
+    </div>
+    <div class="card">
+      <h4>Whole table</h4>
+      <p>Every new value is the same, and there is no primary key. One <code class="inline">UPDATE</code>, one transaction. Correct but unbounded, so the report names these tables separately.</p>
+      <div class="mono-list"><span>MaskMode.WholeTable</span></div>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <h4>Two things DbScrub will refuse</h4>
+    <p><strong>Masking a primary key column.</strong> The engine walks a table in key order, so changing the key underneath that walk skips rows — and a skipped row keeps its real values. Masked keys also collide with each other and orphan every row referencing them. Use <code class="inline">keep</code>.</p>
+    <p style="margin-top:.5rem"><strong>Scrambling a table with no primary key.</strong> Scrambling writes a different value to every row, which means being able to point at one row, which needs a key. Add a key, or use <code class="inline">static</code> / <code class="inline">null</code> — those write the same value everywhere and need no key.</p>
+  </div>
+</section>
+
+<section id="strategies">
+  <h3>The four column strategies</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Strategy</th><th>What happens</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="code-cell"><span class="strat s-static">static</span></td>
+          <td>Every row gets the fixed <code class="inline">value</code> you supply</td>
+          <td>Type- and length-checked against the real column before the run starts</td>
+        </tr>
+        <tr>
+          <td class="code-cell"><span class="strat s-scramble">scramble</span></td>
+          <td>Letters become <code class="inline">x</code>, digits become <code class="inline">9</code>, punctuation is kept</td>
+          <td>Length and shape survive, so forms still validate. Needs a primary key</td>
+        </tr>
+        <tr>
+          <td class="code-cell"><span class="strat s-null">null</span></td>
+          <td>Emptied</td>
+          <td>Only valid if the column allows nulls — checked against the live schema</td>
+        </tr>
+        <tr>
+          <td class="code-cell"><span class="strat s-keep">keep</span></td>
+          <td>Left alone. You looked, and there is no personal data here</td>
+          <td>Records that a decision <em>was made</em>, so it leaves the unclassified list</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <h4>scramble keeps a value's shape — sometimes that is the wrong thing</h4>
+    <p>A scrambled Social Security number is <code class="inline">999-99-9999</code>: still unmistakably SSN-shaped, and still telling a reader that this column holds Social Security numbers. That is deliberate — preserving shape is what keeps the copy usable, because forms still validate and column widths still hold. But where the <em>shape itself</em> is the sensitive part, use <code class="inline">static</code> instead. The sample config masks <code class="inline">Email</code> with <code class="inline">static</code> for exactly this reason.</p>
+  </div>
+
+  <div class="callout">
+    <h4>Whole tables, in one line</h4>
+    <p><code class="inline">"strategy": "truncate"</code> deletes every row — for audit trails, email logs and message queues, where old values hide inside JSON that no column rule could reach into. <code class="inline">"strategy": "keep"</code> declares a whole table clean and <em>requires</em> a <code class="inline">reason</code>, so an exclusion is a recorded decision rather than a way to make the report quiet.</p>
+  </div>
+</section>
+
+<footer>
+  <p><strong>DbScrub never prints a real value.</strong> Not in the report, not in errors, not in tests.</p>
+  <p>Deeper reading lives in the repo: <code class="inline">docs/SPEC.md</code> is the authoritative specification, <code class="inline">docs/DECISIONS.md</code> explains why each design choice was made and what was rejected, and <code class="inline">docs/HANDOFF.md</code> is the current state of play.</p>
+</footer>
+
+</div>
+
+<script>
+document.querySelectorAll('.code').forEach(function (block) {
+  var button = document.createElement('button');
+  button.className = 'copy';
+  button.type = 'button';
+  button.textContent = 'Copy';
+
+  button.addEventListener('click', function () {
+    var text = block.querySelector('code').textContent;
+
+    navigator.clipboard.writeText(text).then(function () {
+      button.textContent = 'Copied';
+      button.classList.add('done');
+      setTimeout(function () {
+        button.textContent = 'Copy';
+        button.classList.remove('done');
+      }, 1600);
+    });
+  });
+
+  block.appendChild(button);
+});
+</script>
+
+</body>
+</html>

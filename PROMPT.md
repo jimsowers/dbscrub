@@ -1,4 +1,21 @@
-# Getting started
+# PROMPT.md — historical
+
+> **This file is finished business.** It was the bootstrap note that started the
+> repository: how to put the folder under source control, and the prompt for the
+> very first coding session. Steps 1–4 are done, so its instructions no longer
+> describe anything you should do — "do NOT implement clean/mask/rename yet" was
+> true in step 1 and is not true now.
+>
+> Kept because section 3 is still worth doing against any new database, and
+> because the original framing is useful context for why the repo is shaped the
+> way it is.
+>
+> **If you are looking for what to do now:** [README.md](README.md) to run it,
+> [docs/getting-started.html](docs/getting-started.html) for the guided tour, and
+> [docs/HANDOFF.md](docs/HANDOFF.md) for the current state of play and what the
+> next session picks up.
+
+---
 
 ## 1. Put this folder under source control
 

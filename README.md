@@ -4,6 +4,24 @@ Replaces real personal data in a locally restored SQL Server database with
 obvious fakes, so day-to-day development — including anything you paste into an
 AI tool — never touches real people's information.
 
+### 📄 New here? Start with the one-page guide
+
+**[docs/getting-started.html](docs/getting-started.html)** — how to run it in eight
+steps, and how the code works, with class names. Everything a new developer
+needs, on one page.
+
+GitHub shows the source of `.html` files rather than rendering them, so open it
+one of these ways:
+
+- **Locally** — clone the repo and open the file in a browser. It is fully
+  self-contained: no network, no build step, works offline.
+- **Hosted** — enable GitHub Pages for this repo (Settings → Pages → deploy from
+  `main`, folder `/docs`) and it is live at
+  `https://jimsowers.github.io/dbscrub/getting-started.html`, ready to link from
+  a wiki or paste into chat.
+
+---
+
 > **Not finished yet.** `report` and `status` work and only ever read. `clean`
 > now masks data, but it does **not** yet mark the database as cleaned — the
 > verification step that earns that mark is still being built, and nothing may
@@ -19,17 +37,20 @@ against realistic data. That copy contains real names, emails, and Social
 Security numbers. It ends up in screenshots, in support emails, in test output,
 and in AI prompts.
 
-DbScrub overwrites those values with obvious fakes and then marks the database
-as cleaned, so you can always tell which copy you are looking at. Connection
-strings, restore scripts, and teammates' workflows do not change — it is one
-extra command after the restore.
+DbScrub overwrites those values with obvious fakes. Connection strings, restore
+scripts, and teammates' workflows do not change — it is one extra command after
+the restore.
+
+The fakes are deliberately unconvincing. `Dev`, `xxxxx`, `999-99-9999`. A value
+that could be mistaken for real is a value that ends up in an email.
 
 ## Requirements
 
-- .NET 8 runtime
+- .NET 8 runtime (the SDK if you are building it yourself)
 - SQL Server 2019 or later, running locally
-- Windows authentication (your own login needs permission to read the database
-  structure)
+- Windows authentication. `report` and `status` need only to read the database
+  structure. `clean` additionally needs to write to the tables it masks, and to
+  run `ALTER DATABASE` and `ALTER TABLE` — in practice, `db_owner` on the copy.
 
 ## Install
 
@@ -39,7 +60,19 @@ cd dbscrub
 dotnet build
 ```
 
-The commands below assume you run from the repo root.
+There is no `dotnet tool` package yet, so `dbscrub` is not on your PATH. Run it
+either way — both are equivalent, and the rest of this file writes the short
+form:
+
+```bash
+dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb --config my-config.json
+```
+
+```bash
+src\DbScrub.Cli\bin\Debug\net8.0\dbscrub.exe report --server localhost --database MyDb --config my-config.json
+```
+
+All commands assume you are in the repo root.
 
 ---
 
@@ -58,7 +91,7 @@ nothing:
 **2. Ask what it would do.** This only reads:
 
 ```bash
-dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb --config my-config.json
+dbscrub report --server localhost --database MyDb --config my-config.json
 ```
 
 **3. Paste the answer back.** The report ends with every column nobody has
@@ -68,6 +101,33 @@ run `report` again.
 
 Repeat until the unclassified list is empty. That loop is the intended way to
 build a config — nobody can list every column from memory.
+
+**4. Rehearse it.** Same plan, but reached through `clean`'s own safety checks,
+so it also proves a real run would be allowed to start. Still changes nothing:
+
+```bash
+dbscrub clean --server localhost --database MyDb --config my-config.json --dry-run
+```
+
+**5. Run it.** This one changes data. It prints the plan, then asks you to type
+the database name before it touches anything:
+
+```bash
+dbscrub clean --server localhost --database MyDb --config my-config.json
+```
+
+**6. Confirm.** Exit code `0` means the copy is clean, `2` means it is not:
+
+```bash
+dbscrub status --server localhost --database MyDb
+```
+
+> Today step 6 always answers "not clean", because `clean` does not write the
+> stamp yet. See the note at the top.
+
+For what happens between steps 5 and 6 — the order of operations, and why
+temporal history needs special handling — see the
+[one-page guide](docs/getting-started.html).
 
 ---
 
@@ -82,6 +142,11 @@ dbscrub report --server <server> --database <name> --config <path>
 Reads the database, compares it to your config, and prints the plan: which
 tables get emptied, which columns get masked and how, plus everything still
 unclassified. Changes nothing.
+
+It also carries a meaningful exit code, so it works as a CI gate: `5` if the
+config asks for something the schema cannot do, and `3` if columns are
+unclassified while `unclassifiedColumns` is set to `fail`. A report that always
+returned `0` would gate nothing.
 
 ### `clean` — actually change the data
 
@@ -106,6 +171,10 @@ something the schema cannot do, or if you type the wrong name.
 **It does not mark the database as clean yet.** That happens once the
 verification step exists; until then `status` still reports "not clean" after a
 successful run. See the note at the top.
+
+`--rename-to` and `--replace` are not available yet either, for the same reason:
+renaming is only allowed after a clean verification pass. They are deliberately
+absent rather than accepted and ignored.
 
 ### `status` — is this copy safe?
 
@@ -183,15 +252,27 @@ except these" would silently cover new columns as well.
 
 ### Individual columns
 
-| `strategy` | What happens |
-|---|---|
-| `static` | Every row gets the fixed `value` you supply |
-| `scramble` | Replaced in place — letters become `x`, digits become `9`, so length and shape survive |
-| `null` | Emptied (only valid if the column allows nulls) |
-| `keep` | Left alone. You looked, there is no personal data here |
+| `strategy` | What happens | Checked before the run |
+|---|---|---|
+| `static` | Every row gets the fixed `value` you supply | The value must fit the column's type and length |
+| `scramble` | Replaced in place — letters become `x`, digits become `9`, so length and shape survive | Text columns only, and the table needs a primary key |
+| `null` | Emptied | Only if the column allows nulls |
+| `keep` | Left alone. You looked, there is no personal data here | — |
+
+Everything in that last column is verified against the real database *before*
+anything is modified. A `"value": "not-a-social-security-number"` aimed at a
+`char(11)` is a refusal with a line number, not an error halfway through a run.
 
 `keep` matters more than it looks: it records that a decision *was made*, so the
 column stops appearing in the unclassified list. Use `reason` to say why.
+
+**`scramble` keeps a value's shape, which is sometimes the wrong thing.** A
+scrambled SSN is `999-99-9999` — still unmistakably SSN-shaped, and still
+recognisable as "this column holds Social Security numbers". That is deliberate:
+shape is what makes the copy usable, because forms still validate and columns
+still fit. But where the *shape itself* is the sensitive part, reach for
+`static` instead. The sample config uses `static` for `Email` for exactly this
+reason.
 
 Two columns you cannot mask, both refused before anything runs:
 
@@ -211,10 +292,43 @@ Two columns you cannot mask, both refused before anything runs:
 |---|---|---|
 | `allowedServers` | `localhost`, `.`, `(local)`, `127.0.0.1` | Servers DbScrub will connect to. See [Safety](#safety) |
 | `unclassifiedColumns` | `warn` | `warn` prints unclassified columns and continues; `fail` stops instead |
-| `batchSize` | `5000` | Rows updated per transaction |
-| `history` (per table) | `truncate` | For tables that keep a hidden history of every past row |
-| `renameTo` | none | Rename the database after a successful clean |
-| `repairUsers` | none | Database users to reconnect to your local logins after a restore |
+| `batchSize` | `5000` | Rows per transaction, 1 to 1,000,000. An upper bound, not a promise — see below |
+| `history` (per table) | `truncate` | `truncate` empties the hidden history table; `mask` applies the same column strategies to it instead |
+
+`batchSize` is capped internally when a table is masked row by row, because SQL
+Server refuses any single command carrying more than 2100 parameters. A table
+with a two-column key and three scrambled columns spends five parameters per
+row, so batches there are smaller than 5000 no matter what you write.
+
+`history: "mask"` only works when that table's strategies are all `static` or
+`null`. SQL Server gives a history table a clustered index rather than a primary
+key, so there is no way to address one of its rows — and that is what `scramble`
+needs. If you hit that refusal, the answer is the default: `truncate`. Old
+history rows are worth very little in a dev database.
+
+**Two keys are parsed but not yet acted on**, because the steps that use them
+are still being built. Setting them today does nothing:
+
+| Key | Will do | Blocked on |
+|---|---|---|
+| `renameTo` | Rename the database after a clean run | Renaming is only allowed after a verification pass |
+| `repairUsers` | Reconnect restored database users to your local logins | Same step |
+
+### Comments
+
+Any object in the config accepts a `$comment` key, which the loader ignores.
+Useful because JSON has no comment syntax and a masking decision usually
+deserves an explanation:
+
+```json
+{
+  "$comment": "A heap — no primary key, so scramble is refused here.",
+  "name": "dbo.ContactImport",
+  "columns": [
+    { "name": "Email", "strategy": "static", "value": "dev@example.invalid" }
+  ]
+}
+```
 
 ### Config errors
 
@@ -269,14 +383,17 @@ again.
 
 ## Exit codes
 
+Stable by design — CI depends on them, so they are never renumbered, only added
+to.
+
 | Code | Meaning |
 |---|---|
-| `0` | Success — or, for `status`, the database is clean |
-| `1` | Something unexpected went wrong |
-| `2` | Verification found personal data — or, for `status`, the database is not clean |
-| `3` | Unclassified columns while set to `fail` |
-| `4` | Refused: the server is not on the allowed list |
-| `5` | The config file is invalid |
+| `0` | Success. For `status`, the database is clean. For `clean`, also returned when the database was already clean and was skipped |
+| `1` | Something unexpected went wrong — including a run that failed partway, or one that could not rewrite every row |
+| `2` | For `status`, the database is not clean. Reserved for "verification found personal data" once that step exists |
+| `3` | Unclassified columns while set to `fail`, or `clean --fail-on-unclassified` |
+| `4` | A safety check refused: server not on the allowed list, wrong database name typed, or `--yes` used on a server that is not unambiguously local |
+| `5` | The config is invalid, **or** it asks for something the schema cannot do — a `static` value that will not fit, a `scramble` on a table with no primary key, a column that no longer exists |
 
 ---
 
@@ -290,7 +407,41 @@ audit table, computed and identity columns, and a table with no primary key.
 sqlcmd -S "localhost\MSSQLSERVER02" -E -i scripts\create-test-db.sql
 ```
 
-Then point `report` at it using `config/dbscrubtest.masking.json`.
+It drops and recreates, so it is also how you get back to a known state after a
+destructive run. `config/dbscrubtest.masking.json` is a matching config —
+deliberately incomplete, so the unclassified list has something in it and the
+paste-it-back loop is worth doing.
+
+```bash
+dbscrub report --server "localhost\MSSQLSERVER02" --database DbScrubTest --config config\dbscrubtest.masking.json
+```
+
+Then try `clean --dry-run`, then `clean` for real. Nothing in there is a real
+person: the domains, phone numbers, and SSN prefixes are all ranges reserved by
+standards bodies precisely so they can never belong to one.
+
+---
+
+## Going deeper
+
+| File | What it is for |
+|---|---|
+| [docs/getting-started.html](docs/getting-started.html) | The one-page guide. How to run it, and how the code fits together |
+| [docs/SPEC.md](docs/SPEC.md) | The authoritative specification |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Why each design choice was made, and what was rejected. Read this before changing anything load-bearing |
+| [docs/HANDOFF.md](docs/HANDOFF.md) | Current state of play: what works, what is unverified, what is next |
+| [CLAUDE.md](CLAUDE.md) | The working agreement for this repo |
+
+---
+
+## Status
+
+Built and working: config validation, schema inventory, the report, the safety
+checks, the hygiene pass, and the mask engine.
+
+Not built yet: the verification sweep, the `Sanitized` stamp, database rename,
+and orphaned-user repair. Until verification lands, `clean` masks but never
+claims a database is safe.
 
 ---
 
