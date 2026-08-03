@@ -1,7 +1,9 @@
 # Handoff — end of step 4
 
-Last updated 2026-08-02. Steps 1–4 are done. `clean` exists and can modify a
-database: it runs both safety checks, the hygiene pass, and the mask engine.
+Last updated 2026-08-02. Steps 1–4 are done. `clean` exists, runs both safety
+checks, the hygiene pass and the mask engine — and has now been run for real
+against `DbScrubTest`, which is the first time this repository has modified a
+database at all.
 
 **It does not stamp.** The verify gate that earns a stamp is step 5, and
 CLAUDE.md allows a stamp only after a clean verify pass (DECISIONS.md D22). So a
@@ -43,32 +45,47 @@ business to paper over.
   in the right places relative to the Mask section.
 - The stale-entry check: pointing the updated config at the not-yet-rebuilt
   fixture correctly refused with DBS005 and exit 5.
+- **`clean` ran end to end against `DbScrubTest`, and the post-run checks below
+  passed.** Jim ran it — dry run, then the real thing with the typed
+  confirmation — after rebuilding the fixture. This is the first time anything
+  in this repository has modified a database, so it is the first evidence that
+  the versioning dance, the keyset walk, and the keyless fallback work against a
+  real server rather than against a recording double.
+
+  Caveat on how much that proves: one pass, one small fixture, one run. It says
+  the statements are valid and the ordering holds. It does not exercise a table
+  large enough to take more than one batch, so the LOOP boundaries — the second
+  iteration's keyset predicate especially — are still only covered by unit tests
+  and by the row-count reconciliation.
 
 ## NOT verified — read this before trusting anything below
 
-- **`clean` has never run.** Not once, not with `--dry-run`. Every statement it
-  would send is unit-tested as a string, and the ordering is unit-tested against
-  a recording double, but nothing has been executed by SQL Server. The next
-  session's first job is the sequence in "First run" below, and the first
-  destructive run is Jim's to approve (CLAUDE.md).
-- The batch LOOPS in `SqlCleanSession` (keyset walk, transaction per batch,
-  parameter binding) are the part unit tests cannot reach. The row-count
-  reconciliation (D21) is the designed backstop: if the walk skips rows, the run
-  fails loudly instead of reporting success.
+- **Multi-batch walks.** Every fixture table fits in one batch of 5000, so no
+  run has yet taken the `WHERE key > @lo0` path in anger. To force it, set
+  `"batchSize": 2` in `config/dbscrubtest.masking.json` and re-run: `dbo.Person`
+  has 4 rows, so that is 2 batches plus the terminating empty read. Worth doing
+  early in step 5 — it is cheap, and the row-count reconciliation (D21) turns a
+  skipped row into a failed run rather than a silent one.
+- **Composite primary keys.** The generated lexicographic predicate is
+  unit-tested for 1, 2 and 3 key columns, but `DbScrubTest` has only
+  single-column keys, so no composite key has ever reached SQL Server.
 - `history: "mask"` is implemented and unit-tested but has no fixture. The
   fixture uses the default, `truncate`.
+- The integration test tier still does not exist (CLAUDE.md "Testing tiers").
+  Everything above was run by hand.
 
-## First run — the sequence to use
+## Re-running against the fixture
 
-Rebuild the fixture first, then:
+Repeat testing against `DbScrubTest` is fine now — the first-run approval has
+happened. Rebuild the fixture to get back to a known state, then:
 
 ```
 src\DbScrub.Cli\bin\Debug\net8.0\dbscrub.exe clean --server "localhost\MSSQLSERVER02" --database DbScrubTest --config config\dbscrubtest.masking.json --dry-run
 ```
 
-Then drop `--dry-run` and type `DbScrubTest` at the prompt. Afterwards, check by
-hand — the fixture's seed data is shaped to match the step 5 verify patterns on
-purpose, so the interesting queries are:
+Drop `--dry-run` and type `DbScrubTest` at the prompt for the real thing. The
+by-hand checks afterwards — the fixture's seed data is shaped to match the
+step 5 verify patterns on purpose:
 
 - `SELECT * FROM dbo.Person` — FirstName all `Dev`, Email all
   `dev@example.invalid`, Ssn `999-99-9999`, Phone `999-999-9999`, LastName all
@@ -143,10 +160,11 @@ first was invisible to every test because nothing exercised that keyword at all.
 
 - **NEVER push to `main`.** Feature branch and PR, always. "Push it" means open
   a PR.
-- **The first destructive run against a database is Jim's to approve**, even
-  though `.claude/settings.local.json` permits the `dbscrub` binary against
-  `DbScrubTest`. That permission is for repeat testing after the first run, and
-  covers only that database — not `sqlcmd`, not any other database.
+- **The first destructive run against a database is Jim's to approve.** That has
+  happened for `DbScrubTest`, so repeat testing against THAT database is now
+  fine, which is what `.claude/settings.local.json` permits. It covers nothing
+  else — not `sqlcmd`, not another database, and not a first run of any command
+  step 5 adds that writes a stamp or renames.
 - **Never print PII values**, including in tests. Fixture data uses reserved
   ranges only (`example.invalid`, `555-01xx`, never-issued SSN prefixes) and is
   shaped to match the verify patterns on purpose.
@@ -159,8 +177,8 @@ first was invisible to every test because nothing exercised that keyword at all.
 > before writing any code.
 >
 > Steps 1–4 are done. `clean` runs the safety checks, the hygiene pass and the
-> mask engine against a real database, but it deliberately does not verify,
-> stamp, or rename. 323 tests pass.
+> mask engine, and has been run successfully against the DbScrubTest fixture.
+> It deliberately does not verify, stamp, or rename. 323 tests pass.
 >
 > This session is step 5: the verify gate, then stamp and rename, then orphaned
 > user repair — in that order, because a stamp is only ever written after a clean
