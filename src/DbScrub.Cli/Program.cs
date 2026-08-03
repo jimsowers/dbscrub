@@ -2,6 +2,7 @@ using System.CommandLine;
 using DbScrub.Core.Execution;
 using DbScrub.Core.Schema;
 using DbScrub.Core.Stamp;
+using DbScrub.Core.Verify;
 
 namespace DbScrub.Cli;
 
@@ -124,6 +125,8 @@ internal static class Program
             schemaReaderFactory: connectionString => new SchemaInventory(connectionString),
             stampReaderFactory: connectionString => new StampReader(connectionString),
             sessionFactory: connectionString => new SqlCleanSession(connectionString),
+            verifierFactory: connectionString => new SqlVerifier(connectionString),
+            stampWriterFactory: connectionString => new StampWriter(connectionString),
             output: Console.Out,
             error: Console.Error,
             readLine: Console.ReadLine,

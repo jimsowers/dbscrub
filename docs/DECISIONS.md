@@ -370,6 +370,98 @@ Also deliberately absent from this step: `history: "mask"` is now honored rather
 than silently truncated. The hygiene pass emptied history unconditionally, so
 that config keyword had been reading as intent and doing the opposite.
 
+## D23 — Uniqueness is a MODIFIER on a strategy, seeded from the primary key
+
+Requirement raised after step 4: masking every surname to `Xxxxx` makes a dev
+database hard to test against, because nothing distinguishes one row from
+another. Wanted: `Xxxxx1`-style values, configurable per column.
+
+Recorded BEFORE step 5 is built, so the verify gate is designed with it in view
+rather than retrofitted (see "Consequence for verify" below).
+
+**It surfaced a real bug, which is the more urgent half.** DbScrub does not read
+unique constraints — `SchemaInventory` reads primary keys and nothing else. So
+`static` on a column with a unique index sets every row to the same value and
+violates the index, and `scramble` collides whenever two values share a shape.
+Today that is discovered when SQL Server raises it, mid-run, leaving a
+half-masked database. Uniqueness is therefore not only a test-data-quality
+feature; the planner must also REFUSE a constant strategy on a unique column,
+the same way it refuses a scramble with no key (D19) and a masked key
+column (D20).
+
+### Shape: a modifier, not a strategy
+
+    { "name": "LastName", "strategy": "scramble", "unique": "key" }
+
+Rejected: `"strategy": "unique"`. Uniqueness is orthogonal to HOW a value is
+masked — a unique scramble and a unique static are both meaningful — so folding
+it into the strategy name multiplies a deliberately closed set (D2) by every
+combination.
+
+Rejected for now: a template syntax, `"value": "Xxxxx{key}"`. More flexible, and
+the natural v1 shape, but it turns the config into a small language with its own
+escaping, validation and error messages, and we do not yet know which patterns
+AAVSB actually needs. The flag answers the stated requirement; a template can
+supersede it once a real database has shown what is missing.
+
+### Seeded from the primary key, not a counter or a random number
+
+- Keys are already unique, so there is no collision-retry loop, no RNG state and
+  no seed to manage.
+- It is deterministic, so it is unit-testable — the property this repo keeps
+  choosing (D12, D13).
+- It is STABLE ACROSS RUNS. A developer who bookmarks person 4172 gets the same
+  fake name after every refresh. Random values break that on every restore, and
+  that is a daily cost paid to save a day of implementation.
+
+### The discriminator overwrites the tail; it does not append
+
+`Xxxxxxx` with key 42 becomes `Xxxxx42`, NOT `Xxxxxxx42`.
+
+Appending breaks the length guarantee that `scramble` exists for and overflows
+fixed-width columns — a `char(11)` SSN has no spare room, and neither does most
+of a legacy schema. Overwriting the tail keeps the length contract exactly
+intact, which is the whole reason `scramble` is not simply "REDACTED" (D2).
+
+Where the discriminator cannot fit — a `char(3)` column across 10,000 rows —
+that is a plan-time refusal with the arithmetic in the message, matching how a
+too-long `static` value is already handled.
+
+### Known limits, accepted
+
+- Needs a primary key, exactly as `scramble` does (D19). A heap gets no
+  uniqueness, and the refusal says so.
+- Composite keys need a concatenation rule; the value is the key columns joined,
+  shortened to a base-36 token when it does not fit.
+- Uniqueness of the OUTPUT is only guaranteed while the discriminator fits. The
+  planner proves that up front rather than hoping.
+
+### Consequence for verify (this is why the entry is written now)
+
+The verify gate ignores values composed entirely of scramble output (D17), via
+`Scrambler.LooksScrambled` — no letter but x/X, no digit but 9. `Xxxxx42`
+satisfies neither. Built naively, the verify gate would flag every uniquely
+masked column and no correctly scrubbed database could ever be stamped, which is
+precisely the trap D17 already documented once.
+
+So the placeholder rule must be an extension point from the start, not a
+hardcoded test for scramble output. Step 5 builds it that way.
+
+### Sequencing
+
+Step 5 first, this after it, and both before the AAVSB config is written in
+anger — so that config is authored once against the final strategy set. Rationale
+for the order: `clean` currently has no check on its own output, so adding
+masking modes before the verify gate means shipping new ways to be wrong with
+nothing that would catch them. D2 also puts test-data realism in v1, and this is
+realism-adjacent; finishing the safety milestone first keeps that priority
+honest.
+
+The one piece pulled FORWARD into step 5: reading unique indexes in
+`SchemaInventory`, because it is a few lines beside the primary-key query and it
+converts a mid-run failure into a plan-time refusal whether or not the rest of
+this ships.
+
 ## Roadmap
 
 - **v0** (this repo, now): spec in SPEC.md.
