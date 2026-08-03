@@ -90,9 +90,13 @@ public static class MaskSql
     {
         RequireKey(plan, nameof(SelectBatch));
 
+        // ReadColumns, not ComputedColumns: an `email` column is rewritten per
+        // row but built from the key alone, so its current value never has to
+        // cross the wire. Reading it would drag personal data out of the
+        // database for no reason.
         var columns = plan.KeyColumns
             .Select(c => c.Name)
-            .Concat(plan.ComputedColumns.Select(c => c.Name))
+            .Concat(plan.ReadColumns.Select(c => c.Name))
             .Select(SqlIdentifier.Quote);
 
         var builder = new StringBuilder();

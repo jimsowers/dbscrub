@@ -124,6 +124,9 @@ public sealed record ColumnVerdict(
     /// </summary>
     public ConfigValue? Value { get; init; }
 
+    /// <summary>Whether every row should get a different masked value (DECISIONS.md D23).</summary>
+    public UniqueMode Unique { get; init; }
+
     public override string ToString() => $"{QualifiedColumn} -> {Kind}";
 }
 

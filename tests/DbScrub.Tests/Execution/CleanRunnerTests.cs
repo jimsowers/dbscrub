@@ -243,6 +243,27 @@ public class CleanRunnerTests
     }
 
     [Fact]
+    public async Task TheRunTellsVerifyWhatItWrote()
+    {
+        // The end-to-end half of the static-replacement gap. Verify cannot
+        // derive "dev@example.invalid" from its shape — the run has to declare
+        // it, or the gate reports the column it just masked as a leak.
+        var verifier = new FakeVerifier(VerifyReport.Clean(2, 0));
+
+        var plan = Build(
+            SchemaBuilder.Database().Table("dbo.Person", "PersonId", "Email")
+                .WithPrimaryKey("PersonId").Build(),
+            """
+            { "tables": [ { "name": "dbo.Person", "columns": [
+                { "name": "Email", "strategy": "static", "value": "dev@example.invalid" } ]} ] }
+            """);
+
+        await Run(plan, new RecordingSession(), verifier);
+
+        Assert.Equal(["dev@example.invalid"], verifier.SawReplacements!.Order());
+    }
+
+    [Fact]
     public async Task AVerifyThatThrowsIsNotAVerifyThatPassed()
     {
         var stamps = new RecordingStampWriter();
@@ -360,10 +381,15 @@ public class CleanRunnerTests
     {
         public int Calls { get; private set; }
 
+        public IReadOnlySet<string>? SawReplacements { get; private set; }
+
         public Task<VerifyReport> VerifyAsync(
-            Core.Schema.DatabaseSchema schema, CancellationToken cancellationToken = default)
+            Core.Schema.DatabaseSchema schema,
+            IReadOnlySet<string> knownReplacements,
+            CancellationToken cancellationToken = default)
         {
             Calls++;
+            SawReplacements = knownReplacements;
             return Task.FromResult(report);
         }
     }
@@ -371,7 +397,9 @@ public class CleanRunnerTests
     private sealed class ThrowingVerifier : IVerifier
     {
         public Task<VerifyReport> VerifyAsync(
-            Core.Schema.DatabaseSchema schema, CancellationToken cancellationToken = default) =>
+            Core.Schema.DatabaseSchema schema,
+            IReadOnlySet<string> knownReplacements,
+            CancellationToken cancellationToken = default) =>
             Task.FromException<VerifyReport>(new InvalidOperationException("the sweep blew up"));
     }
 

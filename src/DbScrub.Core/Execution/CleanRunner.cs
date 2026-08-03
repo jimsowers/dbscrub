@@ -110,7 +110,10 @@ public static class CleanRunner
         VerifyReport report;
         try
         {
-            report = await verifier.VerifyAsync(plan.Scrub.Schema, cancellationToken);
+            // The gate has to be told what this run wrote, or it reports the
+            // masked columns as leaks (see PlaceholderRules).
+            report = await verifier.VerifyAsync(
+                plan.Scrub.Schema, plan.Mask.ReplacementValues, cancellationToken);
         }
         catch (Exception ex)
         {

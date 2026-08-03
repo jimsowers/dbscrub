@@ -35,14 +35,54 @@ public static class PlaceholderRules
         // Scrambler output: no letter but x/X, no digit but 9, and something
         // was actually replaced — so punctuation alone ("---") does not qualify.
         ("scrambled", Scrambler.LooksScrambled),
+
+        // Scrambler output carrying a row key, from `"unique": "key"`. The key's
+        // digits are real digits, so the rule above rejects it outright and a
+        // uniquely-masked column would be reported as a leak.
+        ("scrambled-with-key", Scrambler.LooksScrambledWithKey),
+
+        // A generated address from the `email` strategy. Safe to recognise by
+        // its DOMAIN rather than by argument: RFC 2606 reserves `.invalid`
+        // permanently, so nothing real can live there. This is the payoff of
+        // the tool owning the shape instead of the config supplying it.
+        ("generated-email", FakeEmail.Looks),
     ];
 
     /// <summary>
     /// True when this value is recognisably something the mask engine wrote, and
     /// should therefore not be reported as a leak.
     /// </summary>
-    public static bool IsMaskedOutput(string? value) =>
-        value is not null && Rules.Any(rule => rule.IsMatch(value));
+    /// <param name="knownReplacements">
+    /// The exact values this run wrote via `static`. They have to be passed in
+    /// because no rule can DERIVE them: "dev@example.invalid" is indistinguishable
+    /// from a real address by shape alone, which is the whole reason a config
+    /// author chose it.
+    ///
+    /// Without this the gate failed a correctly masked database. Both sample
+    /// configs replace Email with an email-shaped constant; every row then holds
+    /// a value that matches the email pattern and satisfies no rule below, so
+    /// verify reported the masked column as a leak and no run could ever earn a
+    /// stamp. Same trap as the scrambled-SSN one in D17, one level along: the
+    /// masking is correct and the detector is right to notice — it just needs to
+    /// be told what this run put there.
+    ///
+    /// Matched EXACTLY and case-sensitively. A real value that merely contains
+    /// the replacement is still a leak.
+    /// </param>
+    public static bool IsMaskedOutput(string? value, IReadOnlySet<string>? knownReplacements = null)
+    {
+        if (value is null)
+        {
+            return false;
+        }
+
+        if (knownReplacements is not null && knownReplacements.Contains(value))
+        {
+            return true;
+        }
+
+        return Rules.Any(rule => rule.IsMatch(value));
+    }
 
     /// <summary>The rule names, so a future report can say WHY a value was excused.</summary>
     public static IReadOnlyList<string> RuleNames => Rules.Select(r => r.Name).ToList();

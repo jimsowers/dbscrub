@@ -512,6 +512,119 @@ successful `clean` slower for it is a bad trade.
 Revisit only if the threat model changes. If disk forensics ever comes in
 scope, the answer is the v1 quarantine pipeline, not these two statements.
 
+## D25 — Rename and orphaned-user repair are deferred; v0 is done without them
+
+SPEC 5.5 (rename) and 5.6 (repair orphaned SQL users) were the back half of
+step 5. Both are deferred indefinitely, which changes v0's definition of done
+from "steps 1–5" to "steps 1–5 except rename and user repair".
+
+**Nothing uses either one.** D10 made cleaning happen IN PLACE against `AAVSB`,
+so the rename ritual never fires in the workflow this tool was built for.
+`repairUsers` is empty for AAVSB on purpose (D9/D10) — the team's restore script
+already drops and recreates the login and users, and two tools sharing one
+responsibility is how weird bugs are born.
+
+**Rename is also the most dangerous code in the tool.**
+`ALTER DATABASE ... SET SINGLE_USER WITH ROLLBACK IMMEDIATE` terminates every
+other connection and rolls back their work, and `--replace` DROPS a database.
+Building the most destructive feature in the codebase for a use case nobody
+currently has is a bad trade at any price — the risk is immediate and the
+benefit is hypothetical.
+
+Both remain in the SPEC as designed behaviour, because both become real in the
+v1 quarantine pipeline (D8, D11) where the team script does not run and the
+container produces a differently-named database. Deferred, not deleted.
+
+Also deferred, for smaller reasons:
+- **A fixture for `history: "mask"`.** The default is `truncate` and D5 says
+  that is the right answer; the feature is unit-tested and has no user.
+- **The live-SQL integration tier.** It needs Testcontainers, a new dependency
+  that CLAUDE.md requires discussing first, and DECISIONS already scopes it to
+  v0.x.
+
+What this leaves in v0: config validation, schema inventory, `report`, the
+safety checks, the hygiene pass, the mask engine, the verify gate and the stamp.
+That is the whole "keep me out of trouble" milestone (D2) — a database gets
+cleaned, checked, and marked, or it does not get marked.
+
+## D26 — `email` is a GENERATED strategy, because the tool must own the shape
+
+D23 planned a `unique` modifier for every strategy. Building it surfaced a wall
+on `static`, and the way round it turned out to be a better idea than the
+modifier.
+
+### The wall
+
+`static` + `unique` has to splice a row key into a value the config author
+chose. `dev@example.invalid` becomes `dev@example.invali42` if the key overwrites
+the tail, or `dev@example.invalid42` if it is appended. Both are BROKEN
+addresses, and both still match the email pattern while no longer matching the
+declared replacement — so the verify gate reports them as leaks.
+
+Placing the key correctly (`dev42@example.invalid`) requires understanding the
+value's structure, which means a template syntax. D23 deferred templates
+deliberately: they turn the config into a small language with its own escaping
+and validation, before anyone knows which patterns a real database needs.
+
+### The insight
+
+**A value the tool GENERATES can be recognised by the tool that CHECKS. A value
+the config supplies cannot.**
+
+A `static` replacement is opaque to the code — `dev@example.invalid` is
+email-shaped precisely because the author needed the dev database to keep
+working, which makes it indistinguishable from a real address by shape alone.
+That is why the run has to hand verify a literal list, and why the list stops
+working the moment values vary per row.
+
+A generated address has a shape defined in code. One rule recognises a million
+distinct values, with nothing to maintain.
+
+### The shape
+
+    fakeemail15@notreal.invalid          (15 = the row's primary key)
+
+The DOMAIN is the load-bearing part. RFC 2606 reserves `.invalid` permanently:
+it can never be registered and never resolves. So the recognition rule is not a
+careful argument about whether a real address might collide — nothing real can
+exist there, and dev-environment mail aimed at it cannot leave the building.
+`nowhere.com` was considered and rejected for exactly this: `.com` is a public
+TLD and that domain is registrable by someone.
+
+### Refusals, all at plan time
+
+- No primary key: refused. Nothing to vary by (same rule as `scramble`, D19).
+- Column too narrow: refused, with the arithmetic. Computed from the key's
+  declared TYPES rather than from any row, so it needs no query and holds for
+  rows that do not exist yet. An `int` key needs 36 characters.
+- `unique` on `email`: refused as redundant.
+- `unique` on `static`: refused, pointing at `email`. This is the wall above,
+  turned into a message instead of a broken value.
+- `unique` on `null`/`keep`: refused; nothing varies.
+
+### What survived from D23
+
+`scramble` + `unique` ships as designed: the key overwrites the TAIL, so
+`Xxxxxxx` with key 42 is `Xxxxx42` and length is preserved. That covers the
+original request — distinguishable names — and needs no template because
+scrambler output is opaque, every character interchangeable.
+
+### Consequence for verify
+
+Two new placeholder rules, which is exactly why D17's list was written as a list.
+`scrambled-with-key` peels a trailing digit run and checks the remainder;
+`generated-email` matches the reserved domain. Both stay conservative: a real
+SSN peels to `123-45-` whose digits are not 9s, and an address merely
+CONTAINING the reserved domain inside a note is not excused.
+
+### Where this could go
+
+The verify gate knows three shapes — email, SSN, phone. If each had a generator,
+every shape the gate can flag would be one the tool can produce correctly and
+recognise. That symmetry is appealing and stays well short of Bogus-style
+realism (v1, D2). Not built: nothing needs `phone` or `ssn` generation yet, and
+a closed set earns its keep only when its members are used.
+
 ## Roadmap
 
 - **v0** (this repo, now): spec in SPEC.md.

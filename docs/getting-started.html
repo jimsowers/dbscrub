@@ -255,7 +255,7 @@ footer p { margin: 0 0 .4rem; }
   <div class="banner">
     <h2>Working end to end</h2>
     <p><code class="inline">clean</code> masks the database, sweeps every string column for anything that still resembles personal data, and marks the copy as cleaned <strong>only if that sweep comes back empty</strong>. If it doesn't, you get the list of columns that failed and no mark — so <code class="inline">status</code> can never call a database safe on the strength of a run that didn't check.</p>
-    <p>Still to come: renaming the database after a clean run, and reconnecting restored users to local logins.</p>
+    <p>Renaming the database after a clean run, and reconnecting restored users to local logins, are deliberately not built — nothing uses them, cleaning happens in place, and rename is the most destructive thing this tool could do.</p>
   </div>
 </header>
 

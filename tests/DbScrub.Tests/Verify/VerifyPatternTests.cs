@@ -125,6 +125,51 @@ public class VerifyPatternTests
                 $"Scrambling this input produced something the verify gate would flag as a leak: {input}"));
     }
 
+    // ---- the same trap, one level along: static replacements ---------------
+
+    [Fact]
+    public void AStaticEmailReplacementLooksExactlyLikeAnEmailBecauseThatIsThePoint()
+    {
+        // Pinned so nobody "fixes" it by choosing a replacement that does not
+        // look like the thing it replaces. A dev database has to keep working.
+        const string replacement = "dev@example.invalid";
+
+        Assert.Contains(VerifyPattern.All, p => p.Name == "email" && p.Matches(replacement));
+        Assert.False(PlaceholderRules.IsMaskedOutput(replacement),
+            "No rule can derive this from its shape — that is why the run has to hand it over.");
+    }
+
+    [Fact]
+    public void AConfiguredReplacementIsExcusedOnceTheRunDeclaresIt()
+    {
+        // Without this, a CORRECTLY masked database fails verify: every row of
+        // dbo.Person.Email holds the replacement, the email pattern matches it,
+        // and nothing excuses it. No run could ever earn a stamp.
+        var declared = new HashSet<string>(StringComparer.Ordinal) { "dev@example.invalid" };
+
+        Assert.True(PlaceholderRules.IsMaskedOutput("dev@example.invalid", declared));
+    }
+
+    [Fact]
+    public void OnlyTheExactReplacementIsExcused()
+    {
+        // The conservative direction. A real address that merely CONTAINS the
+        // replacement, or differs from it in any way, is still a leak.
+        var declared = new HashSet<string>(StringComparer.Ordinal) { "dev@example.invalid" };
+
+        Assert.False(PlaceholderRules.IsMaskedOutput("ada.lovelace@example.invalid", declared));
+        Assert.False(PlaceholderRules.IsMaskedOutput("dev@example.invalid.co", declared));
+        Assert.False(PlaceholderRules.IsMaskedOutput("see dev@example.invalid", declared));
+        Assert.False(PlaceholderRules.IsMaskedOutput("DEV@EXAMPLE.INVALID", declared));
+    }
+
+    [Fact]
+    public void DeclaringNothingChangesNothing()
+    {
+        Assert.True(PlaceholderRules.IsMaskedOutput("999-99-9999", new HashSet<string>()));
+        Assert.False(PlaceholderRules.IsMaskedOutput("123-45-6789", new HashSet<string>()));
+    }
+
     [Fact]
     public void TheRuleListIsAnExtensionPointNotAHardcodedCheck()
     {

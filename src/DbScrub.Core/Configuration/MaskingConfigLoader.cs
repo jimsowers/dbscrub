@@ -29,7 +29,8 @@ public static class MaskingConfigLoader
     private static readonly string[] TableProperties =
         [Comment, "name", "strategy", "history", "columns", "reason"];
 
-    private static readonly string[] ColumnProperties = [Comment, "name", "strategy", "value", "reason"];
+    private static readonly string[] ColumnProperties =
+        [Comment, "name", "strategy", "value", "reason", "unique"];
 
     /// <summary>Reads and validates a config file. Throws <see cref="ConfigInvalidException"/> on any problem.</summary>
     public static MaskingConfig LoadFile(string path)
@@ -402,6 +403,7 @@ public static class MaskingConfigLoader
             }
 
             var value = ReadStaticValue(element, path, name, strategy.Value);
+            var unique = ReadUnique(element, path, name, strategy.Value);
 
             string? reason = null;
             if (element.TryGetProperty("reason", out var reasonElement))
@@ -409,7 +411,69 @@ public static class MaskingConfigLoader
                 reason = ReadNonEmptyString(reasonElement, $"{path}.reason", "\"reason\"");
             }
 
-            return new ColumnConfig(name, strategy.Value, value, reason);
+            return new ColumnConfig(name, strategy.Value, value, reason, unique);
+        }
+
+        /// <summary>
+        /// Reads the `unique` modifier, and refuses it where it cannot mean
+        /// anything (DECISIONS.md D23/D26).
+        ///
+        /// Allowed on `scramble` only. `null` and `keep` write nothing per-row
+        /// to vary; `email` is unique by construction already; and `static` is
+        /// refused for a reason worth stating — a static value is chosen
+        /// deliberately and every character of it is load-bearing, so there is
+        /// no position the tool can splice a key into without understanding the
+        /// value's structure. "dev@example.invalid" with a key on the end is a
+        /// BROKEN address, whichever end it goes on. Getting that right needs a
+        /// template, which D23 deferred on purpose.
+        /// </summary>
+        private UniqueMode ReadUnique(JsonElement element, string path, string name, ColumnStrategy strategy)
+        {
+            if (!element.TryGetProperty("unique", out var uniqueElement))
+            {
+                return UniqueMode.None;
+            }
+
+            if (uniqueElement.ValueKind != JsonValueKind.String)
+            {
+                Add(ConfigErrorCodes.InvalidType, $"{path}.unique",
+                    $"Column {name} has a \"unique\" that is {Describe(uniqueElement.ValueKind)}; "
+                    + "it must be the string \"key\".");
+                return UniqueMode.None;
+            }
+
+            if (uniqueElement.GetString() != "key")
+            {
+                Add(ConfigErrorCodes.InvalidValue, $"{path}.unique",
+                    $"Column {name} has unknown unique mode \"{uniqueElement.GetString()}\".",
+                    "The only value is \"key\", which seeds each row's masked value from its primary key.");
+                return UniqueMode.None;
+            }
+
+            if (strategy == ColumnStrategy.Scramble)
+            {
+                return UniqueMode.Key;
+            }
+
+            var (why, fix) = strategy switch
+            {
+                ColumnStrategy.Email =>
+                    ("already gives every row a different address",
+                     "Remove \"unique\" — \"email\" is unique by construction."),
+                ColumnStrategy.Static =>
+                    ("writes a value you chose, and there is no place to put a row key inside it "
+                     + "without breaking it",
+                     "Use \"scramble\" with \"unique\", or \"email\" for an address column."),
+                _ =>
+                    ("writes nothing that could vary per row",
+                     "Remove \"unique\", or use \"scramble\" if the column should keep its shape."),
+            };
+
+            Add(ConfigErrorCodes.Contradictory, $"{path}.unique",
+                $"Column {name} uses \"unique\" with strategy \"{Name(strategy)}\", which {why}.",
+                fix);
+
+            return UniqueMode.None;
         }
 
         /// <summary>
@@ -504,6 +568,7 @@ public static class MaskingConfigLoader
                 "static" => ColumnStrategy.Static,
                 "scramble" => ColumnStrategy.Scramble,
                 "keep" => ColumnStrategy.Keep,
+                "email" => ColumnStrategy.Email,
                 var other => Reject(other),
             };
 
@@ -511,7 +576,7 @@ public static class MaskingConfigLoader
             {
                 Add(ConfigErrorCodes.InvalidValue, path,
                     $"Column {column} has unknown strategy \"{other}\".",
-                    "Valid strategies are: null, static, scramble, keep.");
+                    "Valid strategies are: null, static, scramble, keep, email.");
                 return null;
             }
         }

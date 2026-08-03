@@ -179,7 +179,13 @@ public sealed class SqlCleanSession(string connectionString) : ICleanSession
         var rowsPerCommand = MaskSql.RowsPerCommand(plan, batchSize);
 
         var keyCount = plan.KeyColumns.Count;
-        var computedCount = plan.ComputedColumns.Count;
+
+        // Two different lists, and conflating them is the bug waiting here.
+        // ReadColumns is what the SELECT returns; ComputedColumns is what the
+        // UPDATE writes. An `email` column is in the second and not the first,
+        // because its new value comes from the key rather than the old value.
+        var readColumns = plan.ReadColumns;
+        var computed = plan.ComputedColumns;
 
         object[]? lowerBound = null;
         long total = 0;
@@ -208,12 +214,20 @@ public sealed class SqlCleanSession(string connectionString) : ICleanSession
                         key[i] = reader.GetValue(i);
                     }
 
-                    var values = new object?[computedCount];
-                    for (var i = 0; i < computedCount; i++)
+                    var discriminator = RowDiscriminator.For(key);
+
+                    var values = new object?[computed.Count];
+                    var readOrdinal = 0;
+
+                    for (var i = 0; i < computed.Count; i++)
                     {
-                        // The columns follow the key columns in the SELECT, in
-                        // the same order MaskSql numbered their parameters.
-                        values[i] = Transform(plan.ComputedColumns[i], reader, keyCount + i);
+                        var column = computed[i];
+
+                        // Read columns follow the key columns in the SELECT, in
+                        // order; anything else is built from the key alone.
+                        values[i] = column.NeedsCurrentValue
+                            ? Transform(column, reader, keyCount + readOrdinal++, discriminator)
+                            : Build(column, discriminator);
                     }
 
                     rows.Add((key, values));
@@ -243,7 +257,7 @@ public sealed class SqlCleanSession(string connectionString) : ICleanSession
                         update.Parameters.AddWithValue(MaskSql.RowKeyParameter(row, i), rows[row].Key[i]);
                     }
 
-                    for (var i = 0; i < computedCount; i++)
+                    for (var i = 0; i < computed.Count; i++)
                     {
                         update.Parameters.AddWithValue(
                             MaskSql.RowValueParameter(row, i), rows[row].Values[i] ?? DBNull.Value);
@@ -273,7 +287,8 @@ public sealed class SqlCleanSession(string connectionString) : ICleanSession
     /// strategy that reaches here is `scramble` — the constant ones never need
     /// the old value and are bound once per command.
     /// </summary>
-    private static object? Transform(MaskColumn column, SqlDataReader reader, int ordinal)
+    private static object? Transform(
+        MaskColumn column, SqlDataReader reader, int ordinal, string discriminator)
     {
         if (reader.IsDBNull(ordinal))
         {
@@ -282,16 +297,32 @@ public sealed class SqlCleanSession(string connectionString) : ICleanSession
             return null;
         }
 
+        var current = reader.GetString(ordinal);
+
         return column.Strategy switch
         {
-            ColumnStrategy.Scramble => Scrambler.Scramble(reader.GetString(ordinal)),
+            ColumnStrategy.Scramble when column.Unique == UniqueMode.Key =>
+                Scrambler.ScrambleUnique(current, discriminator),
 
-            // Unreachable: MaskPlanner puts nothing else in ComputedColumns.
-            // Throwing beats writing whatever the old value was back unchanged.
+            ColumnStrategy.Scramble => Scrambler.Scramble(current),
+
+            // Unreachable: nothing else needs the current value.
             _ => throw new InvalidOperationException(
                 $"{column.Name} has strategy {column.Strategy}, which is not computed from the row."),
         };
     }
+
+    /// <summary>
+    /// The new value for a column built from the row's KEY rather than from its
+    /// current value — so nothing about the old value is read, or needs to be.
+    /// </summary>
+    private static object Build(MaskColumn column, string discriminator) => column.Strategy switch
+    {
+        ColumnStrategy.Email => FakeEmail.For(discriminator),
+
+        _ => throw new InvalidOperationException(
+            $"{column.Name} has strategy {column.Strategy}, which is not built from the row key."),
+    };
 
     /// <summary>
     /// Binds the replacement values that are the same on every row. Numbered
