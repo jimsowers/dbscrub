@@ -18,8 +18,8 @@ internal static class ExitCode
     /// <summary>Unclassified columns while running in fail mode.</summary>
     public const int Unclassified = 3;
 
-    /// <summary>The safety interlock refused (slice 2).</summary>
-    public const int InterlockRefused = 4;
+    /// <summary>The safety checks refused (step 2).</summary>
+    public const int SafetyCheckRefused = 4;
 
     /// <summary>The config is invalid.</summary>
     public const int ConfigInvalid = 5;

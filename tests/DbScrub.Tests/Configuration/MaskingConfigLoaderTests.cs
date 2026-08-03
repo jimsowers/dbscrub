@@ -299,7 +299,7 @@ public class MaskingConfigLoaderTests
     [Fact]
     public void NonStringStaticValuesArePreservedWithTheirKind()
     {
-        // Slice 4 type-checks the value against the column type, and
+        // Step 4 type-checks the value against the column type, and
         // "the JSON said 0" differs from "the JSON said \"0\"".
         var config = MaskingConfigLoader.Parse("""
             {

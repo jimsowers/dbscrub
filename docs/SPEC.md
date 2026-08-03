@@ -42,9 +42,9 @@ dbscrub status --server localhost --database AAVSB
   mode confusion when raw prod-support copies share the app-expected name.
 - Exit codes: `0` success · `2` verify pass found PII hits (or `status`:
   unstamped) · `3` unclassified columns while `--fail-on-unclassified` ·
-  `4` safety interlock refused · `5` config invalid · `1` anything else.
+  `4` safety checks refused · `5` config invalid · `1` anything else.
 
-## 3. Safety interlock (build this first)
+## 3. Safety checks (build this first)
 
 1. **Server allowlist.** Config `defaults.allowedServers` (default
    `["localhost", ".", "(local)", "127.0.0.1"]` — note `(local)` is a common
@@ -104,7 +104,7 @@ System schemas (`sys`, `cdc`, `INFORMATION_SCHEMA`) and the tool's own
 ## 5. The clean pipeline, in order
 
 ### 5.1 Preflight
-- Interlock (section 3), config validation, schema inventory
+- Safety checks (section 3), config validation, schema inventory
   (`sys.tables` / `sys.columns` / `sys.extended_properties` /
   `temporal_type` / `is_tracked_by_cdc`), diff vs config, print plan.
 - Set database `RECOVERY SIMPLE` if not already (restore point: this is a
@@ -179,7 +179,7 @@ container, where the team script won't run.
 - `report` and `clean` work end-to-end against a local SQL Server 2019+ with a
   config covering: null, static, scramble, keep, table truncate, a temporal
   table, and a CDC-enabled database.
-- Interlock refuses a non-allowlisted server; stamped DBs are skipped.
+- Safety checks refuses a non-allowlisted server; stamped DBs are skipped.
 - Verify gate demonstrably blocks stamp/rename when a planted email survives.
 - Unit tests for: scramble logic, config validation, schema diff, verdict
   resolution.

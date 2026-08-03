@@ -1,5 +1,6 @@
 using DbScrub.Core.Configuration;
 using DbScrub.Core.Reporting;
+using DbScrub.Core.Safety;
 using DbScrub.Core.Schema;
 using DbScrub.Core.Verdicts;
 
@@ -50,11 +51,15 @@ internal static class ReportCommand
             return ExitCode.ConfigInvalid;
         }
 
-        // NOTE: there is deliberately no safety interlock here. `report` never
-        // writes, and the interlock (SPEC section 3) is slice 2. Whether the
-        // localhost allowlist should also gate this read-only command is an
-        // open question recorded in docs/HANDOFF.md — do not quietly decide it
-        // by copying this method.
+        // The allowlist gates `report` too, even though it only reads
+        // (DECISIONS.md D14). It still opens a connection, and a rule with an
+        // exception is a rule people have to remember.
+        if (!ServerAllowlist.IsAllowed(server, config.Defaults.AllowedServers))
+        {
+            error.WriteLine(ServerAllowlist.DescribeRefusal(
+                server, config.Defaults.AllowedServers, configPath));
+            return ExitCode.SafetyCheckRefused;
+        }
 
         DatabaseSchema schema;
         try

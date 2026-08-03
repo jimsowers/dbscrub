@@ -141,6 +141,8 @@ public static class PlanReport
     {
         var kept = plan.Tables.SelectMany(t => t.Columns).Count(c => c.Kind == VerdictKind.Kept);
 
+        var keptWholesale = plan.KeptWholesale.ToList();
+
         builder.AppendLine("Summary");
         builder.AppendLine($"  Tables truncated    {plan.Truncated.Count()}");
         builder.AppendLine($"  Tables masked       {plan.Masked.Count()}");
@@ -148,6 +150,25 @@ public static class PlanReport
         builder.AppendLine($"  Columns kept        {kept}");
         builder.AppendLine($"  UNCLASSIFIED        {plan.Unclassified.Count}");
         builder.AppendLine();
+
+        // A blanket exclusion is the one thing in this report that removes rows
+        // from the UNCLASSIFIED list without anyone looking at a column. Listing
+        // them keeps that visible: an exclusion nobody can see is a blind spot,
+        // which is what the list exists to prevent.
+        if (keptWholesale.Count > 0)
+        {
+            builder.AppendLine($"Excluded by a table-level \"keep\" ({keptWholesale.Count})");
+            builder.AppendLine("  These are covered WHOLESALE, including any column added since.");
+
+            var width = keptWholesale.Max(t => t.QualifiedName.Length);
+            foreach (var table in keptWholesale)
+            {
+                var reason = table.Columns.FirstOrDefault()?.Reason ?? "(no reason given)";
+                builder.AppendLine($"  {table.QualifiedName.PadRight(width)}  {reason}");
+            }
+
+            builder.AppendLine();
+        }
     }
 
     private static void AppendProblems(StringBuilder builder, ScrubPlan plan)

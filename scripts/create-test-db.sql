@@ -9,7 +9,7 @@
       - 555-01xx phone numbers (reserved for fiction)
       - 123-45-6789 style SSNs (never issued)
 
-    It is nonetheless shaped EXACTLY like real PII, on purpose: slice 5's
+    It is nonetheless shaped EXACTLY like real PII, on purpose: step 5's
     verify gate sweeps for email, SSN, and 10-digit phone patterns, and it can
     only be trusted if it finds these before masking and finds nothing after.
     Obviously-fake values that still match the detector is the combination we
@@ -156,7 +156,7 @@ GO
    does not map to a valid login. Fix with:
        ALTER AUTHORIZATION ON DATABASE::DbScrubTest TO sa;
    (A freshly CREATEd database normally has a valid owner, so this is unlikely
-   here; it bites on restored backups, which is a slice-2 concern.)
+   here; it bites on restored backups, which is a step-2 concern.)
 --------------------------------------------------------------------------- */
 EXEC sys.sp_cdc_enable_db;
 GO

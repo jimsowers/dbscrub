@@ -1,70 +1,252 @@
 # DbScrub
 
-A .NET console tool that scrubs PII from a locally restored SQL Server database,
-so day-to-day development (including AI-assisted development) never touches real
-personal data.
+Replaces real personal data in a locally restored SQL Server database with
+obvious fakes, so day-to-day development — including anything you paste into an
+AI tool — never touches real people's information.
 
-**Status:** slice 1 of 5 complete — config validation, schema inventory, verdict
-resolution, and the read-only `report` command. `clean`, `status`, masking, and
-renaming are not implemented yet; the tool cannot currently modify anything.
-See `docs/SPEC.md` for the target and `docs/HANDOFF.md` for what is verified.
+> **Not finished yet.** `report` and `status` work today and only ever read.
+> `clean`, the command that actually changes data, does not exist yet.
+
+---
+
+## The problem it solves
+
+You restore a copy of the production database onto your machine to develop
+against realistic data. That copy contains real names, emails, and Social
+Security numbers. It ends up in screenshots, in support emails, in test output,
+and in AI prompts.
+
+DbScrub overwrites those values with obvious fakes and then marks the database
+as cleaned, so you can always tell which copy you are looking at. Connection
+strings, restore scripts, and teammates' workflows do not change — it is one
+extra command after the restore.
+
+## Requirements
+
+- .NET 8 runtime
+- SQL Server 2019 or later, running locally
+- Windows authentication (your own login needs permission to read the database
+  structure)
+
+## Install
 
 ```bash
-dotnet run --project src/DbScrub.Cli -- report \
-  --server localhost --database AAVSB --config config/masking.sample.json
+git clone https://github.com/jimsowers/dbscrub.git
+cd dbscrub
+dotnet build
 ```
 
-`report` is read-only. It prints the schema-vs-config plan and every
-UNCLASSIFIED column in paste-into-config form. Exit `0` clean, `3` unclassified
-columns in fail mode, `5` invalid config, `1` anything else.
+The commands below assume you run from the repo root.
 
-## The problem
+---
 
-Production `.bak` files get restored locally for development and prod support.
-Most of the time the real PII in that copy is a liability: it can leak into
-emails, screenshots, AI prompts, and test output. Sometimes (prod support) the
-raw data is genuinely needed. DbScrub makes "clean" the default and "raw" a
-deliberate, visible exception.
+## Quick start
 
-## Daily workflow (the ritual)
+**1. Write a config** describing what to do with each column. Start with almost
+nothing:
 
-```
-1. Run the existing team restore script (unchanged): restores .bak directly
-   as AAVSB, recreates the aavsbweb login/user, sets SIMPLE recovery.
-2. Run:  dbscrub clean --database AAVSB --config config/aavsb.masking.json
-     - hygiene: disable CDC, truncate temporal history + audit tables
-     - mask configured columns (null / static / scramble / truncate)
-     - verify: regex sweeps for emails, SSNs, phones -> fail on hits
-     - stamp: extended property Sanitized=true + dbo.__SanitizationLog row
-3. Develop against AAVSB (no connection strings, scripts, or teammate
-   workflows change - dbscrub is a purely additive step)
+```json
+{
+  "defaults": { "allowedServers": ["localhost"] },
+  "tables": []
+}
 ```
 
-The `Sanitized` stamp is the clean/dirty signal; `dbscrub status --database
-AAVSB` answers "is my current copy clean?" in one command (exit 0/2, script-
-friendly). Between the restore script finishing and `clean` finishing, AAVSB
-is raw — close that window with a personal wrapper that runs both as one
-motion (see `scripts/refresh-local.sample.ps1`). Prod-support mode: run the
-restore script and simply don't run dbscrub; `status` will say unstamped.
+**2. Ask what it would do.** This only reads:
 
-An optional stricter ritual (restore as `AAVSB_RAW`, tool renames to `AAVSB`
-after a clean verify) is supported via `--rename-to` and remains the plan for
-the v1 quarantine pipeline — but the default local flow is in-place, matching
-the team's existing script.
+```bash
+dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb --config my-config.json
+```
 
-## Non-negotiable safety rules
+**3. Paste the answer back.** The report ends with every column nobody has
+classified yet, already formatted as JSON. Paste it into your config, change
+`keep` to a real strategy wherever the column actually holds personal data, and
+run `report` again.
 
-- The tool refuses to connect to any server not on the explicit allowlist
-  (default: localhost only).
-- The tool requires the database name to be typed to confirm, terraform-style.
-- Audit/log/history tables are truncated, never "masked".
-- A database is never stamped or renamed unless the verify pass is clean.
+Repeat until the unclassified list is empty. That loop is the intended way to
+build a config — nobody can list every column from memory.
 
-## Repo map
+---
 
-- `docs/SPEC.md` — full v0 specification (build from this)
-- `docs/DECISIONS.md` — why things are the way they are, plus roadmap (v1 quarantine pipeline, Bogus, determinism, subsetting)
-- `docs/HANDOFF.md` — current state: what is verified, what has never run, open questions
-- `config/masking.sample.json` — config file format
-- `CLAUDE.md` — working agreement + guardrails for Claude Code sessions
-- `PROMPT.md` — kickoff prompt for the first Claude Code session
+## Commands
+
+### `report` — what would happen
+
+```bash
+dbscrub report --server <server> --database <name> --config <path>
+```
+
+Reads the database, compares it to your config, and prints the plan: which
+tables get emptied, which columns get masked and how, plus everything still
+unclassified. Changes nothing.
+
+### `status` — is this copy safe?
+
+```bash
+dbscrub status --server <server> --database <name> [--config <path>]
+```
+
+Answers "has this database been cleaned?" Exit code `0` means yes, `2` means
+no, so scripts and build steps can branch on it.
+
+`--config` is optional here; it is read only for the list of allowed servers
+(see [Safety](#safety)). You need it if your SQL Server is a named instance.
+
+---
+
+## Writing a config
+
+A config is one JSON file. The part that matters is `tables`.
+
+```json
+{
+  "defaults": {
+    "allowedServers": ["localhost"],
+    "unclassifiedColumns": "warn",
+    "batchSize": 5000
+  },
+  "tables": [
+    {
+      "name": "dbo.Person",
+      "history": "truncate",
+      "columns": [
+        { "name": "FirstName", "strategy": "static",   "value": "Dev" },
+        { "name": "LastName",  "strategy": "scramble" },
+        { "name": "Email",     "strategy": "static",   "value": "dev@example.invalid" },
+        { "name": "Nickname",  "strategy": "null" },
+        { "name": "PersonId",  "strategy": "keep",     "reason": "surrogate key" }
+      ]
+    },
+    { "name": "dbo.LoginAudit", "strategy": "truncate" }
+  ]
+}
+```
+
+### Whole tables
+
+Two things you can say about an entire table in one line.
+
+**Empty it:**
+
+```json
+{ "name": "dbo.LoginAudit", "strategy": "truncate" }
+```
+
+Deletes every row. Use this for audit trails, email logs, and message queues —
+anywhere old values hide inside JSON or XML that no column-level rule could
+reach into.
+
+**Declare it clean:**
+
+```json
+{ "name": "dbo.StateCode", "strategy": "keep", "reason": "reference data" }
+```
+
+Covers every column at once, so lookup and reference tables stop filling up the
+unclassified list. `reason` is required — an exclusion should be a decision
+someone recorded, not a way to make the report quiet.
+
+Be aware of the trade: this covers columns added to that table *in future*, too.
+The report lists every table excluded this way, under **Excluded by a
+table-level "keep"**, so a blanket exclusion never becomes invisible.
+
+A table entry is exactly one of: `truncate`, `keep`, or a `columns` list. Never
+a combination — `keep` plus `columns` is rejected, because "keep everything
+except these" would silently cover new columns as well.
+
+### Individual columns
+
+| `strategy` | What happens |
+|---|---|
+| `static` | Every row gets the fixed `value` you supply |
+| `scramble` | Replaced in place — letters become `x`, digits become `9`, so length and shape survive |
+| `null` | Emptied (only valid if the column allows nulls) |
+| `keep` | Left alone. You looked, there is no personal data here |
+
+`keep` matters more than it looks: it records that a decision *was made*, so the
+column stops appearing in the unclassified list. Use `reason` to say why.
+
+### Other settings
+
+| Key | Default | Meaning |
+|---|---|---|
+| `allowedServers` | `localhost`, `.`, `(local)`, `127.0.0.1` | Servers DbScrub will connect to. See [Safety](#safety) |
+| `unclassifiedColumns` | `warn` | `warn` prints unclassified columns and continues; `fail` stops instead |
+| `batchSize` | `5000` | Rows updated per transaction |
+| `history` (per table) | `truncate` | For tables that keep a hidden history of every past row |
+| `renameTo` | none | Rename the database after a successful clean |
+| `repairUsers` | none | Database users to reconnect to your local logins after a restore |
+
+### Config errors
+
+Mistakes are reported with a line number and a suggested fix:
+
+```
+config/masking.json(16,9): error DBS006: dbo.Person.Email uses strategy "static" but has no "value".
+  { "name": "Email", "strategy": "static", "value": "[redacted]" }
+```
+
+Unrecognized keys are errors, not warnings — `"stragety": "scramble"` would
+otherwise mask nothing at all, silently.
+
+---
+
+## Safety
+
+DbScrub is designed on the assumption that someone will eventually point it at
+the wrong database.
+
+**It only connects to servers you have listed.** Every command checks
+`allowedServers` before opening a connection. There is no override flag and no
+environment variable — if you need another server, you edit the config, and
+that edit shows up in a diff.
+
+Matching is exact. `localhost` does **not** cover `localhost\SQL2022`,
+`localhost,1433`, or `localhost.corp.example`. This is deliberate: a hosts-file
+entry or an SSH tunnel can make a localhost-shaped name resolve somewhere else
+entirely. If your SQL Server is a named instance, spell it out:
+
+```json
+"allowedServers": ["localhost\\MSSQLSERVER02"]
+```
+
+**Nothing is ever printed that could be personal data.** Not in the report, not
+in errors, not in verification output. The report describes what a column will
+become, never what it currently contains.
+
+Two more protections arrive with `clean`: you will have to type the database
+name to confirm, and a database that has already been cleaned is skipped rather
+than cleaned twice.
+
+---
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success — or, for `status`, the database is clean |
+| `1` | Something unexpected went wrong |
+| `2` | Verification found personal data — or, for `status`, the database is not clean |
+| `3` | Unclassified columns while set to `fail` |
+| `4` | Refused: the server is not on the allowed list |
+| `5` | The config file is invalid |
+
+---
+
+## Trying it without a real database
+
+`scripts/create-test-db.sql` builds a small database called `DbScrubTest` with
+fake data shaped like the real thing — a temporal table, change tracking, an
+audit table, computed and identity columns.
+
+```bash
+sqlcmd -S "localhost\MSSQLSERVER02" -E -i scripts\create-test-db.sql
+```
+
+Then point `report` at it using `config/dbscrubtest.masking.json`.
+
+---
+
+## License
+
+Internal tool. Not currently published.
