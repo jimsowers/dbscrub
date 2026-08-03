@@ -59,10 +59,20 @@ public static class ServerAllowlist
     /// </summary>
     public static bool AllowsUnattendedConfirmation(string server)
     {
-        var candidate = Normalize(server);
+        // Compare the HOST portion only — everything before the instance
+        // separator (DECISIONS.md D18). `localhost\MSSQLSERVER02` is exactly as
+        // unambiguously this machine as `localhost`: the part after the
+        // backslash is an instance name resolved on the same host and cannot
+        // point elsewhere.
+        //
+        // Still an exact match on the host, never a prefix: `localhost.corp`,
+        // `notlocalhost`, and `10.0.0.5\SQL` are all refused. And `--yes` stays
+        // narrower than the allowlist — `(local)` is allowlisted by default but
+        // is not on this list, per SPEC 3.2.
+        var host = Normalize(server).Split('\\')[0].Trim();
 
         return UnattendedSafeServers.Any(s =>
-            string.Equals(candidate, s, StringComparison.OrdinalIgnoreCase));
+            string.Equals(host, s, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

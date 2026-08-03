@@ -79,14 +79,33 @@ public class ServerAllowlistTests
 
     [Theory]
     [InlineData("(local)")]                    // on the default allowlist, still not --yes-able
-    [InlineData(@"localhost\MSSQLSERVER02")]   // no named instance qualifies
     [InlineData("127.0.0.2")]
+    [InlineData("prod-sql-01")]
+    [InlineData("localhost.corp.example")]     // host is NOT localhost
+    [InlineData("notlocalhost")]
+    [InlineData(@"10.0.0.5\SQL2022")]          // named instance on another host
+    [InlineData(@"prod-sql-01\localhost")]     // "localhost" in the instance part proves nothing
     public void UnattendedConfirmationIsNarrowerThanTheAllowlist(string server)
     {
-        // SPEC section 3.2: --yes may skip typed confirmation only for servers
-        // that matched localhost/./127.0.0.1 LITERALLY. Being allowlisted is
-        // not enough.
+        // SPEC section 3.2: --yes may skip typed confirmation only for the
+        // unambiguously-local names. Being allowlisted is not enough.
         Assert.False(ServerAllowlist.AllowsUnattendedConfirmation(server));
+    }
+
+    [Theory]
+    [InlineData(@"localhost\MSSQLSERVER02")]
+    [InlineData(@"localhost\SQL2022")]
+    [InlineData(@".\SQLEXPRESS")]
+    [InlineData(@"127.0.0.1\SQL2022")]
+    [InlineData(@"LOCALHOST\mssqlserver02")]
+    public void ANamedInstanceOnALocalHostMayUseYes(string server)
+    {
+        // DECISIONS.md D18. SPEC 3.2 listed three literal strings, which by
+        // accident banned every named instance — including the only instance on
+        // this dev machine, making `clean` interactive-only and breaking the
+        // restore-then-scrub wrapper. The intent was "unambiguously this
+        // machine", and the host portion is what carries that.
+        Assert.True(ServerAllowlist.AllowsUnattendedConfirmation(server));
     }
 
     [Fact]
