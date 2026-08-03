@@ -269,7 +269,7 @@ footer p { margin: 0 0 .4rem; }
     <li class="step">
       <span class="num">1</span>
       <div class="step-head"><h4>Build it</h4></div>
-      <p>You need the .NET 8 runtime and a SQL Server running on your own machine. Windows authentication — your login needs permission to read the database structure.</p>
+      <p>You need the .NET 8 runtime and a SQL Server running on your own machine, using Windows authentication. <code class="inline">report</code> and <code class="inline">status</code> only need to read the database structure; <code class="inline">clean</code> also writes to the tables it masks and runs <code class="inline">ALTER DATABASE</code> and <code class="inline">ALTER TABLE</code> — in practice, <code class="inline">db_owner</code> on the copy.</p>
       <div class="code"><pre><code>dotnet build</code></pre></div>
     </li>
 
@@ -345,12 +345,12 @@ footer p { margin: 0 0 .4rem; }
     <table>
       <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
       <tbody>
-        <tr><td class="num-cell">0</td><td>Success — or, for <code class="inline">status</code>, the database is clean</td></tr>
-        <tr><td class="num-cell">1</td><td>Something unexpected went wrong</td></tr>
-        <tr><td class="num-cell">2</td><td>Verification found personal data — or, for <code class="inline">status</code>, the database is not clean</td></tr>
-        <tr><td class="num-cell">3</td><td>Unclassified columns while set to fail</td></tr>
-        <tr><td class="num-cell">4</td><td>Refused: the server is not on the allowed list, or you typed the wrong name</td></tr>
-        <tr><td class="num-cell">5</td><td>The config file is invalid, or asks for something the schema cannot do</td></tr>
+        <tr><td class="num-cell">0</td><td>Success. For <code class="inline">status</code>, the database is clean. For <code class="inline">clean</code>, also returned when the database was already clean and was skipped</td></tr>
+        <tr><td class="num-cell">1</td><td>Something unexpected went wrong — including a run that failed partway, or one that could not rewrite every row</td></tr>
+        <tr><td class="num-cell">2</td><td>For <code class="inline">status</code>, the database is not clean. Reserved for “verification found personal data” once that step exists</td></tr>
+        <tr><td class="num-cell">3</td><td>Unclassified columns while set to fail, or <code class="inline">clean --fail-on-unclassified</code></td></tr>
+        <tr><td class="num-cell">4</td><td>A safety check refused: server not on the allowed list, wrong database name typed, or <code class="inline">--yes</code> used on a server that is not unambiguously local</td></tr>
+        <tr><td class="num-cell">5</td><td>The config is invalid, <strong>or</strong> it asks for something the schema cannot do — a <code class="inline">static</code> value that will not fit, a <code class="inline">scramble</code> on a table with no primary key, a column that no longer exists</td></tr>
       </tbody>
     </table>
   </div>
@@ -475,7 +475,7 @@ footer p { margin: 0 0 .4rem; }
         <li>Set the database to SIMPLE recovery</li>
         <li>Disable change data capture</li>
         <li>Turn <strong>OFF</strong> system versioning</li>
-        <li>Empty temporal history tables</li>
+        <li>Empty temporal history tables, unless the config asks for them to be masked instead</li>
         <li>Empty tables marked <code class="inline">truncate</code></li>
       </ul>
     </div>
@@ -562,6 +562,11 @@ footer p { margin: 0 0 .4rem; }
         </tr>
       </tbody>
     </table>
+  </div>
+
+  <div class="callout warn">
+    <h4>scramble keeps a value's shape — sometimes that is the wrong thing</h4>
+    <p>A scrambled Social Security number is <code class="inline">999-99-9999</code>: still unmistakably SSN-shaped, and still telling a reader that this column holds Social Security numbers. That is deliberate — preserving shape is what keeps the copy usable, because forms still validate and column widths still hold. But where the <em>shape itself</em> is the sensitive part, use <code class="inline">static</code> instead. The sample config masks <code class="inline">Email</code> with <code class="inline">static</code> for exactly this reason.</p>
   </div>
 
   <div class="callout">

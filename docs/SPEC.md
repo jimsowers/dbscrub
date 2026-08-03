@@ -23,7 +23,7 @@ container pipeline, fail-closed-by-default.
 ## 2. CLI surface
 
 ```
-dbscrub clean  --server localhost --database AAVSB --config <path> [--rename-to <name>] [--replace] [--dry-run] [--fail-on-unclassified]
+dbscrub clean  --server localhost --database AAVSB --config <path> [--yes] [--rename-to <name>] [--replace] [--dry-run] [--fail-on-unclassified]
 dbscrub report --server localhost --database AAVSB --config <path>
 dbscrub status --server localhost --database AAVSB
 ```
