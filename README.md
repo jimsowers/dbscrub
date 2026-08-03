@@ -4,6 +4,24 @@ Replaces real personal data in a locally restored SQL Server database with
 obvious fakes, so day-to-day development — including anything you paste into an
 AI tool — never touches real people's information.
 
+### 📄 New here? Start with the one-page guide
+
+**[docs/getting-started.html](docs/getting-started.html)** — how to run it in eight
+steps, and how the code works, with class names. Everything a new developer
+needs, on one page.
+
+GitHub shows the source of `.html` files rather than rendering them, so open it
+one of these ways:
+
+- **Locally** — clone the repo and open the file in a browser. It is fully
+  self-contained: no network, no build step, works offline.
+- **Hosted** — enable GitHub Pages for this repo (Settings → Pages → deploy from
+  `main`, folder `/docs`) and it is live at
+  `https://jimsowers.github.io/dbscrub/getting-started.html`, ready to link from
+  a wiki or paste into chat.
+
+---
+
 > **Not finished yet.** `report` and `status` work and only ever read. `clean`
 > now masks data, but it does **not** yet mark the database as cleaned — the
 > verification step that earns that mark is still being built, and nothing may
