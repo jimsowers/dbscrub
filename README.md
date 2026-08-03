@@ -22,11 +22,15 @@ one of these ways:
 
 ---
 
-> **Not finished yet.** `report` and `status` work and only ever read. `clean`
-> now masks data, but it does **not** yet mark the database as cleaned — the
-> verification step that earns that mark is still being built, and nothing may
-> call a database safe without it. So `dbscrub status` keeps answering "not
-> clean" even after a successful `clean`, on purpose.
+> **Working end to end.** `report` and `status` only ever read. `clean` masks the
+> database, sweeps every string column looking for anything that still resembles
+> personal data, and marks the copy as cleaned **only if that sweep comes back
+> empty**. If it doesn't, you get the list of columns that failed and no mark —
+> so `dbscrub status` can never call a database safe on the strength of a run
+> that didn't check.
+>
+> Still to come: renaming the database after a clean, and reconnecting restored
+> users to local logins.
 
 ---
 
@@ -122,11 +126,8 @@ dbscrub clean --server localhost --database MyDb --config my-config.json
 dbscrub status --server localhost --database MyDb
 ```
 
-> Today step 6 always answers "not clean", because `clean` does not write the
-> stamp yet. See the note at the top.
-
-For what happens between steps 5 and 6 — the order of operations, and why
-temporal history needs special handling — see the
+For what happens between steps 5 and 6 — the order of operations, why temporal
+history needs special handling, and what the verification sweep checks — see the
 [one-page guide](docs/getting-started.html).
 
 ---
@@ -158,6 +159,15 @@ Prints the same plan `report` does, asks you to type the database name, then
 runs it: empties the tables you marked `truncate`, masks the columns you
 configured, and handles the hidden history tables around both.
 
+Then it **checks its own work**. Every string column in the database is swept
+for values that still look like an email address, a Social Security number or a
+phone number — not just the columns you configured, because the ones nobody
+classified are where something is most likely to have been missed. Only if that
+sweep finds nothing does the database get marked as cleaned.
+
+A sweep that finds something prints the columns and how many values matched,
+never the values themselves, and exits `2` with no mark written.
+
 | Flag | What it does |
 |---|---|
 | `--dry-run` | Print the plan and stop. Never prompts, so it is safe in a script |
@@ -168,12 +178,7 @@ It refuses to start — before changing anything — if the server is not on you
 allowed list, if the database has already been cleaned, if the config asks for
 something the schema cannot do, or if you type the wrong name.
 
-**It does not mark the database as clean yet.** That happens once the
-verification step exists; until then `status` still reports "not clean" after a
-successful run. See the note at the top.
-
-`--rename-to` and `--replace` are not available yet either, for the same reason:
-renaming is only allowed after a clean verification pass. They are deliberately
+`--rename-to` and `--replace` are not available yet. They are deliberately
 absent rather than accepted and ignored.
 
 ### `status` — is this copy safe?
@@ -390,7 +395,7 @@ to.
 |---|---|
 | `0` | Success. For `status`, the database is clean. For `clean`, also returned when the database was already clean and was skipped |
 | `1` | Something unexpected went wrong — including a run that failed partway, or one that could not rewrite every row |
-| `2` | For `status`, the database is not clean. Reserved for "verification found personal data" once that step exists |
+| `2` | The verification sweep found values that still look like personal data, so nothing was marked — or, for `status`, the database is not clean |
 | `3` | Unclassified columns while set to `fail`, or `clean --fail-on-unclassified` |
 | `4` | A safety check refused: server not on the allowed list, wrong database name typed, or `--yes` used on a server that is not unambiguously local |
 | `5` | The config is invalid, **or** it asks for something the schema cannot do — a `static` value that will not fit, a `scramble` on a table with no primary key, a column that no longer exists |
@@ -437,11 +442,11 @@ standards bodies precisely so they can never belong to one.
 ## Status
 
 Built and working: config validation, schema inventory, the report, the safety
-checks, the hygiene pass, and the mask engine.
+checks, the hygiene pass, the mask engine, the verification sweep, and the
+`Sanitized` mark.
 
-Not built yet: the verification sweep, the `Sanitized` stamp, database rename,
-and orphaned-user repair. Until verification lands, `clean` masks but never
-claims a database is safe.
+Not built yet: database rename after a clean run (`renameTo`, `--rename-to`,
+`--replace`) and orphaned-user repair (`repairUsers`).
 
 ---
 

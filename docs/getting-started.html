@@ -252,9 +252,9 @@ footer p { margin: 0 0 .4rem; }
   </div>
 
   <div class="banner">
-    <h2>Read this before you rely on it</h2>
-    <p><code class="inline">clean</code> masks data, but it does <strong>not</strong> yet mark the database as cleaned. The verification step that earns that mark is still being built, and nothing may call a database safe without it.</p>
-    <p>So <code class="inline">dbscrub status</code> keeps answering <em>“not clean”</em> even after a completely successful <code class="inline">clean</code>. That is the honest answer, not a bug.</p>
+    <h2>Working end to end</h2>
+    <p><code class="inline">clean</code> masks the database, sweeps every string column for anything that still resembles personal data, and marks the copy as cleaned <strong>only if that sweep comes back empty</strong>. If it doesn't, you get the list of columns that failed and no mark — so <code class="inline">status</code> can never call a database safe on the strength of a run that didn't check.</p>
+    <p>Still to come: renaming the database after a clean run, and reconnecting restored users to local logins.</p>
   </div>
 </header>
 
@@ -322,6 +322,7 @@ footer p { margin: 0 0 .4rem; }
     <li class="step">
       <span class="num">8</span>
       <div class="step-head"><h4>Check it</h4><span class="pill safe">Read only</span></div>
+      <p><code class="inline">clean</code> already ran the verification sweep and wrote the mark, so this is the independent second opinion — the one a script or a build step can ask without doing anything.</p>
       <p>Answers “has this database been cleaned?” so scripts and build steps can branch on the exit code. <code class="inline">--config</code> is optional here and is read only for the list of allowed servers — you need it if your SQL Server is a named instance.</p>
       <div class="code"><pre><code>dbscrub status --server localhost --database MyDb</code></pre></div>
     </li>

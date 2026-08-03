@@ -3,7 +3,9 @@ using DbScrub.Core.Execution;
 using DbScrub.Core.Hygiene;
 using DbScrub.Core.Masking;
 using DbScrub.Core.Planning;
+using DbScrub.Core.Stamp;
 using DbScrub.Core.Verdicts;
+using DbScrub.Core.Verify;
 using DbScrub.Tests.Schema;
 using Xunit;
 
@@ -26,7 +28,7 @@ public class CleanRunnerTests
     {
         var session = new RecordingSession();
 
-        await CleanRunner.RunAsync(TemporalPlan(), batchSize: 100, session);
+        await Run(TemporalPlan(), session);
 
         var detach = session.Transcript.FindIndex(e => e.Contains("SYSTEM_VERSIONING = OFF"));
         var mask = session.Transcript.FindIndex(e => e.StartsWith("MASK ", StringComparison.Ordinal));
@@ -52,7 +54,7 @@ public class CleanRunnerTests
         // detach was pointless and hide a real ordering error.
         var session = new RecordingSession();
 
-        await CleanRunner.RunAsync(TemporalPlan(), batchSize: 100, session);
+        await Run(TemporalPlan(), session);
 
         var truncate = session.Transcript.FindIndex(e => e.Contains("TRUNCATE TABLE"));
         var mask = session.Transcript.FindIndex(e => e.StartsWith("MASK ", StringComparison.Ordinal));
@@ -67,7 +69,7 @@ public class CleanRunnerTests
         // buys nothing. It has to come first to be worth anything.
         var session = new RecordingSession();
 
-        await CleanRunner.RunAsync(TemporalPlan(), batchSize: 100, session);
+        await Run(TemporalPlan(), session);
 
         Assert.Contains("RECOVERY SIMPLE", session.Transcript[0]);
     }
@@ -85,7 +87,7 @@ public class CleanRunnerTests
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """);
 
-        await CleanRunner.RunAsync(plan, batchSize: 100, session);
+        await Run(plan, session);
 
         var cdc = session.Transcript.FindIndex(e => e.Contains("sp_cdc_disable_db"));
         var mask = session.Transcript.FindIndex(e => e.StartsWith("MASK ", StringComparison.Ordinal));
@@ -103,7 +105,7 @@ public class CleanRunnerTests
         // from then on.
         var session = new RecordingSession { FailMaskingOn = "dbo.Person" };
 
-        var outcome = await CleanRunner.RunAsync(TemporalPlan(), batchSize: 100, session);
+        var outcome = await Run(TemporalPlan(), session);
 
         Assert.NotNull(outcome.Failure);
         Assert.Contains(session.Transcript, e => e.Contains("SYSTEM_VERSIONING = ON"));
@@ -117,7 +119,7 @@ public class CleanRunnerTests
         // other means "this database needs an ALTER TABLE before you use it".
         var session = new RecordingSession { FailHygieneOn = HygieneStepKind.ReEnableVersioning };
 
-        var outcome = await CleanRunner.RunAsync(TemporalPlan(), batchSize: 100, session);
+        var outcome = await Run(TemporalPlan(), session);
 
         Assert.Null(outcome.Failure);
         Assert.NotNull(outcome.ReattachFailure);
@@ -131,7 +133,7 @@ public class CleanRunnerTests
         // the check that turns a silent batching bug into a failed run.
         var session = new RecordingSession { RowsInTable = 100, RowsUpdated = 99 };
 
-        var outcome = await CleanRunner.RunAsync(TemporalPlan(), batchSize: 100, session);
+        var outcome = await Run(TemporalPlan(), session);
 
         Assert.False(outcome.Succeeded);
         var incomplete = Assert.Single(outcome.Incomplete);
@@ -143,7 +145,7 @@ public class CleanRunnerTests
     {
         var session = new RecordingSession { RowsInTable = 0, RowsUpdated = 0 };
 
-        var outcome = await CleanRunner.RunAsync(TemporalPlan(), batchSize: 100, session);
+        var outcome = await Run(TemporalPlan(), session);
 
         Assert.True(outcome.Succeeded);
         Assert.Empty(outcome.Incomplete);
@@ -163,7 +165,7 @@ public class CleanRunnerTests
             """);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            CleanRunner.RunAsync(plan, batchSize: 100, session));
+            Run(plan, session));
 
         Assert.Empty(session.Transcript);
     }
@@ -173,10 +175,119 @@ public class CleanRunnerTests
     {
         var session = new RecordingSession { RowsInTable = 42, RowsUpdated = 42 };
 
-        var outcome = await CleanRunner.RunAsync(TemporalPlan(), batchSize: 100, session);
+        var outcome = await Run(TemporalPlan(), session);
 
         Assert.Equal(42, outcome.RowsUpdated);
         Assert.True(outcome.Succeeded);
+    }
+
+    // ---- the gate: nothing gets stamped without a clean verify -------------
+
+    [Fact]
+    public async Task AStampIsWrittenOnlyAfterVerifyPasses()
+    {
+        var stamps = new RecordingStampWriter();
+
+        var outcome = await Run(TemporalPlan(), new RecordingSession(), stampWriter: stamps);
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.Stamped);
+        Assert.Single(stamps.Written);
+    }
+
+    [Fact]
+    public async Task VerifyHitsBlockTheStamp()
+    {
+        // SPEC 5.4 — the gate. Since D10 removed the naming distinction, the
+        // stamp is the ONLY thing separating a scrubbed copy from a raw one, so
+        // a stamp written over surviving PII makes every later answer wrong.
+        var stamps = new RecordingStampWriter();
+        var verifier = new FakeVerifier(new VerifyReport(
+            [new VerifyHit("dbo", "Person", "Notes", "email", 3)], ColumnsScanned: 4, RowsInspected: 3));
+
+        var outcome = await Run(TemporalPlan(), new RecordingSession(), verifier, stamps);
+
+        Assert.False(outcome.Stamped);
+        Assert.False(outcome.Succeeded);
+        Assert.Empty(stamps.Written);
+        Assert.Equal(3, outcome.Verify!.TotalHits);
+    }
+
+    [Fact]
+    public async Task FailedMaskingIsNotEvenVerified()
+    {
+        // The database is in an unknown state, so there is nothing worth
+        // checking and certainly nothing worth stamping.
+        var verifier = new FakeVerifier(VerifyReport.Clean(0, 0));
+        var stamps = new RecordingStampWriter();
+
+        var outcome = await Run(
+            TemporalPlan(), new RecordingSession { FailMaskingOn = "dbo.Person" }, verifier, stamps);
+
+        Assert.Null(outcome.Verify);
+        Assert.False(outcome.Stamped);
+        Assert.Equal(0, verifier.Calls);
+        Assert.Empty(stamps.Written);
+    }
+
+    [Fact]
+    public async Task RowsLeftUnmaskedBlockTheStampToo()
+    {
+        var stamps = new RecordingStampWriter();
+
+        var outcome = await Run(
+            TemporalPlan(), new RecordingSession { RowsInTable = 100, RowsUpdated = 40 }, stampWriter: stamps);
+
+        Assert.False(outcome.Stamped);
+        Assert.Empty(stamps.Written);
+    }
+
+    [Fact]
+    public async Task AVerifyThatThrowsIsNotAVerifyThatPassed()
+    {
+        var stamps = new RecordingStampWriter();
+
+        var outcome = await Run(
+            TemporalPlan(), new RecordingSession(), new ThrowingVerifier(), stamps);
+
+        Assert.False(outcome.Stamped);
+        Assert.NotNull(outcome.Failure);
+        Assert.Empty(stamps.Written);
+    }
+
+    [Fact]
+    public async Task AFailedStampLeavesACleanDatabaseThatSaysItIsDirty()
+    {
+        // The safe direction to fail in: `status` reports it unsanitized and the
+        // worst cost is a re-run. The reverse would be a database everybody
+        // believes is safe.
+        var outcome = await Run(
+            TemporalPlan(), new RecordingSession(), stampWriter: new ThrowingStampWriter());
+
+        Assert.False(outcome.Stamped);
+        Assert.NotNull(outcome.Failure);
+        Assert.True(outcome.Verify!.Passed);
+    }
+
+    [Fact]
+    public async Task TheStampRecordsWhatTheRunActuallyDid()
+    {
+        var stamps = new RecordingStampWriter();
+        var clock = new FakeClock(new DateTimeOffset(2026, 8, 3, 9, 30, 0, TimeSpan.Zero));
+
+        await CleanRunner.RunAsync(
+            TemporalPlan(),
+            new CleanOptions(100, "abc123", "9.9.9", clock),
+            new RecordingSession { RowsInTable = 42, RowsUpdated = 42 },
+            new FakeVerifier(VerifyReport.Clean(4, 0)),
+            stamps);
+
+        var record = Assert.Single(stamps.Written);
+
+        Assert.Equal(new DateTime(2026, 8, 3, 9, 30, 0, DateTimeKind.Utc), record.RunUtc);
+        Assert.Equal("abc123", record.ConfigHash);
+        Assert.Equal("9.9.9", record.ToolVersion);
+        Assert.Equal(42, record.RowsUpdated);
     }
 
     // ---- harness -----------------------------------------------------------
@@ -227,6 +338,64 @@ public class CleanRunnerTests
 
         public override string ToString() =>
             string.Join(Environment.NewLine, Transcript.Select((e, i) => $"  {i}: {e}"));
+    }
+
+    /// <summary>
+    /// Defaults everything the tests do not care about: a verify that passes and
+    /// a stamp writer that records. A test that cares passes its own.
+    /// </summary>
+    private static Task<CleanOutcome> Run(
+        CleanPlan plan,
+        RecordingSession session,
+        IVerifier? verifier = null,
+        IStampWriter? stampWriter = null) =>
+        CleanRunner.RunAsync(
+            plan,
+            new CleanOptions(BatchSize: 100, ConfigHash: "test-hash", ToolVersion: "test", TimeProvider.System),
+            session,
+            verifier ?? new FakeVerifier(VerifyReport.Clean(columnsScanned: 4, rowsInspected: 0)),
+            stampWriter ?? new RecordingStampWriter());
+
+    private sealed class FakeVerifier(VerifyReport report) : IVerifier
+    {
+        public int Calls { get; private set; }
+
+        public Task<VerifyReport> VerifyAsync(
+            Core.Schema.DatabaseSchema schema, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(report);
+        }
+    }
+
+    private sealed class ThrowingVerifier : IVerifier
+    {
+        public Task<VerifyReport> VerifyAsync(
+            Core.Schema.DatabaseSchema schema, CancellationToken cancellationToken = default) =>
+            Task.FromException<VerifyReport>(new InvalidOperationException("the sweep blew up"));
+    }
+
+    private sealed class RecordingStampWriter : IStampWriter
+    {
+        public List<StampRecord> Written { get; } = [];
+
+        public Task WriteAsync(StampRecord record, CancellationToken cancellationToken = default)
+        {
+            Written.Add(record);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ThrowingStampWriter : IStampWriter
+    {
+        public Task WriteAsync(StampRecord record, CancellationToken cancellationToken = default) =>
+            Task.FromException(new InvalidOperationException("could not write the stamp"));
+    }
+
+    /// <summary>A clock that does not move, so the stamp's timestamp is an exact assertion.</summary>
+    private sealed class FakeClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private static CleanPlan Build(Core.Schema.DatabaseSchema schema, string configJson) =>

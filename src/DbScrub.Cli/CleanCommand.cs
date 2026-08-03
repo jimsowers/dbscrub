@@ -6,6 +6,7 @@ using DbScrub.Core.Safety;
 using DbScrub.Core.Schema;
 using DbScrub.Core.Stamp;
 using DbScrub.Core.Verdicts;
+using DbScrub.Core.Verify;
 
 namespace DbScrub.Cli;
 
@@ -44,9 +45,12 @@ internal static class CleanCommand
         Func<string, ISchemaReader> schemaReaderFactory,
         Func<string, IStampReader> stampReaderFactory,
         Func<string, ICleanSession> sessionFactory,
+        Func<string, IVerifier> verifierFactory,
+        Func<string, IStampWriter> stampWriterFactory,
         TextWriter output,
         TextWriter error,
         Func<string?> readLine,
+        TimeProvider? clock = null,
         CancellationToken cancellationToken = default)
     {
         // ---- 1. config -----------------------------------------------------
@@ -162,13 +166,23 @@ internal static class CleanCommand
 
         output.WriteLine();
 
+        // Hashed from the file's bytes as they are on disk, so the stamp records
+        // the config a human could go and look at (SPEC 5.5).
+        var options = new CleanOptions(
+            BatchSize: config.Defaults.BatchSize,
+            ConfigHash: StampRecord.HashConfigFile(configPath),
+            ToolVersion: StampRecord.CurrentToolVersion,
+            Clock: clock ?? TimeProvider.System);
+
         CleanOutcome outcome;
         await using (var session = sessionFactory(connectionString))
         {
             outcome = await CleanRunner.RunAsync(
                 plan,
-                config.Defaults.BatchSize,
+                options,
                 session,
+                verifierFactory(connectionString),
+                stampWriterFactory(connectionString),
                 new Progress<string>(message => output.WriteLine($"  {message}")),
                 cancellationToken);
         }
@@ -243,6 +257,15 @@ internal static class CleanCommand
             lines.Add($"    {table}");
         }
 
+        if (outcome.Verify is { } verify)
+        {
+            lines.Add(string.Empty);
+            lines.Add("Verify");
+            lines.Add($"  String columns swept  {verify.ColumnsScanned}");
+            lines.Add($"  Values inspected      {verify.RowsInspected:N0}");
+            lines.Add($"  Result                {(verify.Passed ? "PASS" : $"FAIL — {verify.TotalHits:N0} hit(s)")}");
+        }
+
         return string.Join(Environment.NewLine, lines) + Environment.NewLine;
     }
 
@@ -293,11 +316,34 @@ internal static class CleanCommand
             return ExitCode.UnexpectedError;
         }
 
+        if (outcome.Verify is { Passed: false } verify)
+        {
+            // SPEC 5.4: the gate. Hits mean no stamp and no rename, and the
+            // report names the column and the shape but NEVER the value — the
+            // whole premise of this branch is that the database may still hold
+            // real personal data.
+            error.WriteLine();
+            error.WriteLine($"VERIFY FAILED. '{database}' still holds values that look like personal data,");
+            error.WriteLine("so it has NOT been stamped and is NOT safe to use.");
+            error.WriteLine();
+
+            var width = verify.Hits.Max(h => h.QualifiedColumn.Length);
+            foreach (var hit in verify.Hits.OrderByDescending(h => h.Count))
+            {
+                error.WriteLine($"  {hit.QualifiedColumn.PadRight(width)}  {hit.Pattern,-13} {hit.Count:N0} value(s)");
+            }
+
+            error.WriteLine();
+            error.WriteLine("Each of these columns needs a strategy in your config. Add them, restore a");
+            error.WriteLine("fresh copy, and run again — the values above were not modified by this run.");
+
+            return ExitCode.VerifyFailed;
+        }
+
         output.WriteLine();
-        output.WriteLine($"'{database}' has been masked, but it is NOT STAMPED.");
-        output.WriteLine("  The verify gate that earns the stamp is not built yet (SPEC 5.4, step 5),");
-        output.WriteLine("  and nothing may claim a database is clean without it. `dbscrub status` will");
-        output.WriteLine("  keep reporting this database as NOT SANITIZED until that ships.");
+        output.WriteLine($"'{database}' is sanitized.");
+        output.WriteLine("  Verify swept every string column and found nothing. The stamp is written,");
+        output.WriteLine("  so `dbscrub status` will now report this database as SANITIZED.");
 
         return ExitCode.Success;
     }

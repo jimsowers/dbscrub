@@ -1,0 +1,58 @@
+{
+  "$comment": "The FINISHED config for the DbScrubTest fixture — what dbscrubtest.masking.json becomes after you run `report`, paste its UNCLASSIFIED block back, and pick a real strategy for each column. Every live column resolves to a verdict, so a clean run passes verify and earns the stamp. Keep the incomplete one too: the pair is the whole workflow, and the difference between them is exactly what the verify gate catches.",
+  "defaults": {
+    "allowedServers": ["localhost", ".", "(local)", "127.0.0.1", "localhost\\MSSQLSERVER02"],
+    "unclassifiedColumns": "fail",
+    "batchSize": 5000,
+    "repairUsers": []
+  },
+  "tables": [
+    {
+      "$comment": "The kitchen-sink table. FullName is computed and ValidFrom/ValidTo are GENERATED ALWAYS, so all three are exempt — SQL Server maintains them and would reject the UPDATE anyway.",
+      "name": "dbo.Person",
+      "history": "truncate",
+      "columns": [
+        { "name": "PersonId",   "strategy": "keep",     "reason": "identity surrogate key" },
+        { "name": "FirstName",  "strategy": "static",   "value": "Dev" },
+        { "name": "LastName",   "strategy": "scramble" },
+        { "name": "Email",      "strategy": "static",   "value": "dev@example.invalid" },
+        { "name": "Ssn",        "strategy": "scramble" },
+        { "name": "Phone",      "strategy": "scramble" },
+        {
+          "$comment": "Free text, and the reason the gate exists. The seed data hides a phone number and a second email inside prose, where no shape-preserving strategy would help — scrambling it would keep both shapes intact. Replace the lot.",
+          "name": "Notes",      "strategy": "static",   "value": "[redacted]"
+        },
+        { "name": "CreatedUtc", "strategy": "keep",     "reason": "no PII, needed for queries" },
+        {
+          "$comment": "A computed column: FirstName + ' ' + LastName. It cannot be written, and it holds whatever those two hold — so masking them masks this automatically. Listed only because dbscrub still asks for a verdict on computed columns.",
+          "name": "FullName",   "strategy": "keep",     "reason": "computed from FirstName and LastName, both masked"
+        }
+      ]
+    },
+    {
+      "$comment": "CDC-tracked, in a non-dbo schema. Its Notes column interpolates a person's email address, which is the classic way PII escapes into a table nobody thinks of as holding any.",
+      "name": "app.Enrollment",
+      "columns": [
+        { "name": "EnrollmentId", "strategy": "keep",   "reason": "identity surrogate key" },
+        { "name": "PersonId",     "strategy": "keep",   "reason": "foreign key to dbo.Person" },
+        { "name": "Notes",        "strategy": "static", "value": "[redacted]" }
+      ]
+    },
+    {
+      "$comment": "Audit table: truncated, never masked (DECISIONS.md D5). Its Payload column holds JSON with an email and an SSN inside it, and no column-level rule can reach in there.",
+      "name": "dbo.LoginAudit",
+      "strategy": "truncate"
+    },
+    {
+      "$comment": "A HEAP — no primary key. Every strategy here is the same for every row, which is what makes a keyless table maskable at all: one set-based UPDATE, one transaction. \"scramble\" would be refused here (DECISIONS.md D19).",
+      "name": "dbo.ContactImport",
+      "columns": [
+        { "name": "SourceFile",  "strategy": "keep",   "reason": "file name, not personal data" },
+        { "name": "Email",       "strategy": "static", "value": "dev@example.invalid" },
+        { "name": "Phone",       "strategy": "null" },
+        { "name": "Notes",       "strategy": "static", "value": "[redacted]" },
+        { "name": "ImportedUtc", "strategy": "keep",   "reason": "no PII, needed for queries" }
+      ]
+    }
+  ]
+}

@@ -4,6 +4,7 @@ using DbScrub.Core.Hygiene;
 using DbScrub.Core.Masking;
 using DbScrub.Core.Schema;
 using DbScrub.Core.Stamp;
+using DbScrub.Core.Verify;
 using DbScrub.Tests.Schema;
 using Xunit;
 
@@ -205,16 +206,49 @@ public class CleanCommandTests : IDisposable
     // ---- what a finished run says ------------------------------------------
 
     [Fact]
-    public async Task ASuccessfulRunSaysTheDatabaseIsNotStampedYet()
+    public async Task ASuccessfulRunVerifiesAndStamps()
     {
-        // The verify gate that earns a stamp is step 5. Nothing may claim a
-        // database is clean without it, so the success message says so plainly
-        // rather than exiting 0 in silence.
-        var result = await RunAsync(Person(), PersonConfig, typed: "AAVSB");
+        var stamps = new RecordingStampWriter();
+
+        var result = await RunAsync(Person(), PersonConfig, typed: "AAVSB", stampWriter: stamps);
 
         Assert.Equal(ExitCode.Success, result.ExitCode);
-        Assert.Contains("NOT STAMPED", result.Output);
-        Assert.Contains("status", result.Output);
+        Assert.Contains("is sanitized", result.Output);
+        Assert.Contains("Result                PASS", result.Output);
+        Assert.Single(stamps.Written);
+    }
+
+    [Fact]
+    public async Task AFailedVerifyExitsTwoAndWritesNoStamp()
+    {
+        // SPEC 5.4 — the gate. Exit 2 is the same code `status` returns for an
+        // unstamped database, because both mean the same thing to a caller:
+        // this database is not safe to use.
+        var stamps = new RecordingStampWriter();
+
+        var result = await RunAsync(Person(), PersonConfig, typed: "AAVSB", stampWriter: stamps,
+            verify: new VerifyReport(
+                [new VerifyHit("dbo", "Person", "Notes", "email", 7)], ColumnsScanned: 2, RowsInspected: 7));
+
+        Assert.Equal(ExitCode.VerifyFailed, result.ExitCode);
+        Assert.Contains("VERIFY FAILED", result.Error);
+        Assert.Contains("dbo.Person.Notes", result.Error);
+        Assert.Empty(stamps.Written);
+    }
+
+    [Fact]
+    public async Task AFailedVerifyNamesTheColumnAndShapeButNeverAValue()
+    {
+        // The premise of this branch is that the database may still hold real
+        // personal data, so anything printable here is exactly what must not be
+        // printed (CLAUDE.md).
+        var result = await RunAsync(Person(), PersonConfig, typed: "AAVSB",
+            verify: new VerifyReport(
+                [new VerifyHit("dbo", "Person", "Notes", "ssn", 2)], ColumnsScanned: 2, RowsInspected: 2));
+
+        Assert.Contains("dbo.Person.Notes", result.Error);
+        Assert.Contains("ssn", result.Error);
+        Assert.Contains("2 value(s)", result.Error);
     }
 
     [Fact]
@@ -336,7 +370,9 @@ public class CleanCommandTests : IDisposable
         string? typed = "AAVSB",
         SanitizationStatus? stamp = null,
         RecordingSession? session = null,
-        Func<string?>? readLine = null)
+        Func<string?>? readLine = null,
+        VerifyReport? verify = null,
+        RecordingStampWriter? stampWriter = null)
     {
         await File.WriteAllTextAsync(_configPath, configJson);
 
@@ -354,10 +390,30 @@ public class CleanCommandTests : IDisposable
             schemaReaderFactory: _ => new FakeSchemaReader(schema),
             stampReaderFactory: _ => new FakeStampReader(stamp ?? SanitizationStatus.NotSanitized),
             sessionFactory: _ => recorder,
+            verifierFactory: _ => new FakeVerifier(verify ?? VerifyReport.Clean(2, 0)),
+            stampWriterFactory: _ => stampWriter ?? new RecordingStampWriter(),
             output: output,
             error: error,
             readLine: readLine ?? (() => typed));
 
         return new RunResult(exitCode, output.ToString(), error.ToString(), recorder);
+    }
+
+    private sealed class FakeVerifier(VerifyReport report) : IVerifier
+    {
+        public Task<VerifyReport> VerifyAsync(
+            DatabaseSchema schema, CancellationToken cancellationToken = default) =>
+            Task.FromResult(report);
+    }
+
+    private sealed class RecordingStampWriter : IStampWriter
+    {
+        public List<StampRecord> Written { get; } = [];
+
+        public Task WriteAsync(StampRecord record, CancellationToken cancellationToken = default)
+        {
+            Written.Add(record);
+            return Task.CompletedTask;
+        }
     }
 }
