@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Unit tier only for now. The live-SQL integration tier (CLAUDE.md
-       "Testing tiers") arrives in a later slice behind the Enabled const
+       "Testing tiers") arrives in a later step behind the Enabled const
        and its source-scan guard test. -->
 
   <PropertyGroup>
@@ -21,25 +21,25 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Tests load the real sample config, so a change to it that breaks
-         validation fails the build instead of being discovered at runtime.
-         Link keeps it at a predictable relative path in the output folder. -->
+    <!-- SampleConfigLoads reads the real config/masking.sample.json, so a
+         change that breaks validation fails the build instead of surfacing
+         later at runtime. This entry exists ONLY to copy the file next to the
+         test assembly.
+
+         Visible="false" on purpose: config/ is a solution folder now, so the
+         file is already browsable there. Without this the same file would
+         appear twice in Solution Explorer, which is the confusion this
+         restructure removed.
+
+         create-test-db.sql and dbscrubtest.masking.json used to be linked here
+         too. They are not, anymore — nothing in code reads them, so they live
+         in the scripts/ and config/ solution folders where a human looks for
+         them. When the Testcontainers tier lands and a test genuinely needs
+         the DDL, it comes back as an EmbeddedResource. -->
     <None Include="..\..\config\masking.sample.json"
           Link="config\masking.sample.json"
-          CopyToOutputDirectory="PreserveNewest" />
-
-    <!-- The DbScrubTest fixture. Linked, not moved: the file stays at
-         scripts/create-test-db.sql so the sqlcmd path a human types stays
-         short, and so it sits beside the other run-by-hand script. It belongs
-         to THIS project because it is a test fixture — when the Testcontainers
-         integration tier lands (DECISIONS.md roadmap v0.x) the test will
-         execute this exact DDL, at which point this becomes an
-         EmbeddedResource. No CopyToOutputDirectory yet: nothing reads it in
-         code, and copying a file no test opens is just clutter in bin. -->
-    <None Include="..\..\scripts\create-test-db.sql"
-          Link="Fixtures\create-test-db.sql" />
-    <None Include="..\..\config\dbscrubtest.masking.json"
-          Link="Fixtures\dbscrubtest.masking.json" />
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
   </ItemGroup>
 
 </Project>

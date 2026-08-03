@@ -69,7 +69,8 @@ public sealed record TableConfig(
     string Name,
     TableStrategy? Strategy,
     HistoryMode History,
-    IReadOnlyList<ColumnConfig> Columns)
+    IReadOnlyList<ColumnConfig> Columns,
+    string? Reason = null)
 {
     /// <summary>`dbo.Person` — how the config writes it and how errors print it.</summary>
     public string QualifiedName => $"{Schema}.{Name}";
@@ -88,7 +89,7 @@ public sealed record ColumnConfig(
 /// The literal behind `"value"` for a static strategy, kept as raw text plus
 /// its JSON kind rather than as a CLR object.
 ///
-/// Why not just `object?`: slice 4 has to type-check this against the real
+/// Why not just `object?`: step 4 has to type-check this against the real
 /// column type (SPEC section 4), and "the JSON said 5000" is a different fact
 /// from "the JSON said \"5000\"". Boxing to object throws that distinction
 /// away; a JsonElement can't be stored because its lifetime is tied to the
@@ -125,6 +126,18 @@ public enum TableStrategy
 {
     /// <summary>DELETE/TRUNCATE the whole table — audit, logs, queues (DECISIONS.md D5).</summary>
     Truncate,
+
+    /// <summary>
+    /// "I looked at this whole table and there is no PII in it." Every column
+    /// resolves to Kept in one line, instead of enumerating them all.
+    ///
+    /// This is the escape hatch for reference and lookup tables, which
+    /// otherwise dominate the UNCLASSIFIED list on a large database and train
+    /// people to stop reading it — the exact failure the list exists to
+    /// prevent. It requires a `reason`, so an exclusion stays a recorded
+    /// decision rather than a way to make the report quiet.
+    /// </summary>
+    Keep,
 }
 
 /// <summary>What to do with a temporal table's history table (SPEC 5.2).</summary>

@@ -9,7 +9,7 @@ support), Steveiwonder/DataMasker (.NET + Bogus, small personal repo),
 Neosync (excellent design, acquired and no longer maintained), Greenmask
 (Postgres only), Microsoft Static Data Masking (killed before GA — died on
 constraints/uniqueness/referential integrity, which is the lesson).
-Decision: own the tool (safety interlock, stamp/rename ritual, CDC/temporal
+Decision: own the tool (the safety checks, stamp/rename ritual, CDC/temporal
 hygiene, and the verify gate are the point, and none come in a box), but model
 the config on dbatools' and use its PII scanner to draft the column inventory.
 
@@ -26,7 +26,7 @@ so they physically can't see raw copies,
 `Sanitized` extended property as the machine-checkable stamp, and (future) a
 dev-environment startup guard in apps that refuses unstamped databases.
 
-## D4 — Safety interlock is non-negotiable
+## D4 — The safety checks are non-negotiable
 Localhost allowlist with no CLI override, typed database-name confirmation,
 refuse already-stamped databases. A masking tool with a mistyped connection
 string is a production incident.
@@ -86,14 +86,14 @@ devs and does NOT change. Consequences:
   the-app-name. Closed by a PERSONAL wrapper (scripts/refresh-local.sample.ps1)
   that runs script + dbscrub as one motion — additive, no shared-script edits.
 - The script's `@@SERVERNAME` guard (server-side) and dbscrub's allowlist
-  interlock (client-side) are complementary layers; keep both.
+  check (client-side) are complementary layers; keep both.
 
 ## D11 — Consuming apps get a read-only guard; scrubbing never ships in app binaries
 Proposal considered: aavsb.sln references the scrub engine and auto-cleans on
 startup when a web.config flag is on and the DB is unstamped. REJECTED:
 prod is never stamped, so on prod the trigger condition is permanently true,
 held back only by config-transform correctness — and the app would scrub with
-its own credentials and connection string, bypassing the allowlist interlock
+its own credentials and connection string, bypassing the allowlist check
 and typed confirmation entirely. One bad transform = the product destroys
 production. Also: Application_Start is a terrible host for long destructive
 work (IIS recycles mid-scrub = half-masked DB), and .NET Framework can't
@@ -151,6 +151,55 @@ needs explaining, a custom message naming the fix beats any auto-generated one.
 
 CLAUDE.md's allowlist has been corrected so a future session doesn't install
 FluentAssertions v8 and quietly create a license obligation.
+
+## D14 — The server allowlist gates every command, including read-only ones
+SPEC section 3 frames the safety checks as protecting mutations ("before
+mutating"), which would leave `report` and `status` ungated. Decided the
+opposite: every command that opens a connection checks the allowlist first.
+
+Reasons: a rule with an exception is a rule people have to remember, and the
+exception is the shape a mistake takes. `report` reads production's structure
+if pointed at production. And the cost is near zero — the check is a string
+comparison that happens before any socket is opened, proven by a test that
+fails if the reader is touched on a refused server.
+
+Matching is EXACT, case-insensitive, whitespace-trimmed. Explicitly not prefix
+matching: a hosts-file entry, an SSH tunnel, or a SQL Server alias can all make
+a `localhost`-shaped name resolve elsewhere. `localhost` does not cover
+`localhost\SQL2022`, `localhost,1433`, or `localhost.corp.example`.
+
+Consequence, accepted deliberately: a machine whose only instance is named
+(the dev box is `localhost\MSSQLSERVER02`, with no default instance) is refused
+by the built-in defaults until its config names the instance in full. That is
+friction on first run, once, in exchange for the check meaning exactly what it
+says. `--yes` remains narrower still (SPEC 3.2): only literal `localhost`,
+`.`, and `127.0.0.1` may skip typed confirmation — not `(local)`, and no named
+instance however it is spelled.
+
+## D15 — `status` takes an OPTIONAL --config
+SPEC section 2 gives `status` no `--config`, which conflicts with D14: the
+allowlist lives in the config, so a gated `status` needs one. Rather than make
+it required (and make the simplest command need a file) or leave `status`
+ungated (and reintroduce the exception D14 removed), `--config` is optional.
+
+Without it, the built-in defaults apply, which covers a plain localhost box.
+With it, only the allowlist is read — never the tables — so pointing `status`
+at any config is safe. On a named-instance machine the config is required in
+practice, which is the same friction D14 already accepted.
+
+## D16 — ToolVersion is an extended property, not only a log row
+SPEC 5.5 puts tool version in the `dbo.__SanitizationLog` row. It is also
+written as a database-level extended property alongside `Sanitized`,
+`SanitizedUtc`, and `ConfigHash`, so `status` — and later the read-only Guard
+in SPEC section 8 — answers the whole question in one cheap query that needs no
+elevated rights and no table to exist. The log row remains the audit trail; the
+extended properties are the fast check.
+
+Stamp reading is fail-safe: only an explicit `true` or `1` counts as sanitized.
+A missing, empty, misspelled, or half-written value reads as NOT sanitized.
+The dangerous error is calling a dirty database clean; the reverse costs a
+re-run. An unparseable `SanitizedUtc` leaves the database sanitized with an
+unknown date, because the flag is the load-bearing part.
 
 ## Roadmap
 

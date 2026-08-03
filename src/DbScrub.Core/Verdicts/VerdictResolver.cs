@@ -103,6 +103,20 @@ public static class VerdictResolver
                 IsConfigured: true);
         }
 
+        // ---- table-level keep -------------------------------------------------
+
+        if (tableConfig.Strategy == TableStrategy.Keep)
+        {
+            // Every column, including ones added since the config was written.
+            // That is the trade this feature makes: one line of config in
+            // exchange for covering the table blind. The loader requires a
+            // reason so the trade is at least recorded, and the report counts
+            // these tables separately so they never become invisible.
+            return new TablePlan(table, TableAction.Keep,
+                VerdictFor(table, VerdictKind.Kept, tableConfig.Reason),
+                IsConfigured: true);
+        }
+
         // ---- per-column ------------------------------------------------------
 
         var configByColumn = tableConfig.Columns

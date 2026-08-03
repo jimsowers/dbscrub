@@ -13,6 +13,37 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DbScrub.Tests", "tests\DbScrub.Tests\DbScrub.Tests.csproj", "{3A66FDEA-E7C2-487B-A53D-F3B1C3F00E79}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "config", "config", "{AB0A2377-81EC-4E18-A541-F87082B939A1}"
+	ProjectSection(SolutionItems) = preProject
+		config\masking.sample.json = config\masking.sample.json
+		config\dbscrubtest.masking.json = config\dbscrubtest.masking.json
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{78CD1A6E-8455-4E05-85BF-2474B4A86DF2}"
+	ProjectSection(SolutionItems) = preProject
+		docs\SPEC.md = docs\SPEC.md
+		docs\DECISIONS.md = docs\DECISIONS.md
+		docs\HANDOFF.md = docs\HANDOFF.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "scripts", "scripts", "{C8BD2E10-2BC3-4FD7-804B-7C5B7491D4D5}"
+	ProjectSection(SolutionItems) = preProject
+		scripts\create-test-db.sql = scripts\create-test-db.sql
+		scripts\refresh-local.sample.ps1 = scripts\refresh-local.sample.ps1
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{BDFF9660-1A88-498F-A246-B5155C0B725F}"
+	ProjectSection(SolutionItems) = preProject
+		README.md = README.md
+		CLAUDE.md = CLAUDE.md
+		PROMPT.md = PROMPT.md
+		Directory.Build.props = Directory.Build.props
+		Directory.Packages.props = Directory.Packages.props
+		.editorconfig = .editorconfig
+		.gitattributes = .gitattributes
+		.gitignore = .gitignore
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU

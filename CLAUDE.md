@@ -7,12 +7,12 @@ real personal data. `docs/SPEC.md` is the authoritative spec; `docs/DECISIONS.md
 explains why and holds the roadmap. Read both before proposing changes.
 
 ## How we work
-- Small steps. One vertical slice per session, reviewed before the next.
-  Slice order: (1) config model + validation + schema inventory + `report`
-  command with the diff/UNCLASSIFIED output, (2) safety interlock + stamp +
+- Small steps. One step per session, reviewed before the next.
+  Step order: (1) config model + validation + schema inventory + `report`
+  command with the diff/UNCLASSIFIED output, (2) safety checks + stamp +
   `status` command + rename + orphaned-user repair, (3) hygiene steps
   (CDC/temporal/truncate), (4) mask engine with the four strategies,
-  (5) verify gate, (6) DbScrub.Guard micro-library (netstandard2.0;net8.0, READ-ONLY - see SPEC section 8 and DECISIONS D11). Don't jump ahead. Slice 6 is DEFERRED: build it only when the repo owner explicitly asks. Milestone for v0 is the cleaner working MANUALLY (slices 1-5). Make NO changes to aavsb.sln, its web.config, or any consuming application - the aavsb target framework is .NET Framework 4.8, recorded here for when slice 6 eventually starts.
+  (5) verify gate, (6) DbScrub.Guard micro-library (netstandard2.0;net8.0, READ-ONLY - see SPEC section 8 and DECISIONS D11). Don't jump ahead. Step 6 is DEFERRED: build it only when the repo owner explicitly asks. Milestone for v0 is the cleaner working MANUALLY (steps 1-5). Make NO changes to aavsb.sln, its web.config, or any consuming application - the aavsb target framework is .NET Framework 4.8, recorded here for when step 6 eventually starts.
 - Teach while building: the repo owner wants to understand every line.
   Prefer boring, readable code over clever code. Explain SQL Server behaviors
   (temporal versioning dance, TRUNCATE vs DELETE + FKs, SINGLE_USER rename)
@@ -24,7 +24,7 @@ explains why and holds the roadmap. Read both before proposing changes.
 - NEVER push to `main`. Every change arrives via a feature branch and a pull
   request. "Push it" / "ship it" from the repo owner means open a PR, never
   push to main. There is no exception for small or safe-looking changes.
-- Never weaken the safety interlock: localhost-only allowlist with no CLI
+- Never weaken the safety checks: localhost-only allowlist with no CLI
   override flag; typed database-name confirmation; refuse already-stamped DBs.
 - Never print PII values in logs, errors, verify output, or tests that use
   realistic-looking seed data.
@@ -45,7 +45,7 @@ explains why and holds the roadmap. Read both before proposing changes.
 - Every schema query goes through one SchemaInventory class so sys.* access
   is testable and in one place.
 
-## Definition of done for any slice
+## Definition of done for any step
 - Unit tests for the new logic.
 - `dbscrub report` still runs clean against the sample config.
 - README/SPEC updated if behavior changed.
@@ -54,13 +54,13 @@ explains why and holds the roadmap. Read both before proposing changes.
 Claude may draft, explain, and stage any of the following, but never runs them
 unattended:
 - Any statement that mutates a database — DDL, DML, TRUNCATE, sp_rename,
-  ALTER DATABASE. This holds even after the safety interlock ships: the
-  interlock protects against the wrong database, not against the wrong intent.
+  ALTER DATABASE. This holds even after the safety checks ship: they
+  protect against the wrong database, not against the wrong intent.
 - The first run of any destructive command against a newly restored database.
 - Global git config changes, force-push, or anything rewriting pushed history.
 - Adding a permission rule that lets a database-touching command run without a
-  prompt. Revisit only after the safety interlock (SPEC section 3) exists and
-  has a passing test; scope it to a concrete command shape, never a wildcard.
+  prompt. Revisit only after the safety checks (SPEC section 3) exist and
+  have a passing test; scope it to a concrete command shape, never a wildcard.
 - Running the live-SQL test tier (below).
 
 ## Testing tiers

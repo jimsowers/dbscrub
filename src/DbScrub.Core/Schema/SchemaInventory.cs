@@ -179,7 +179,7 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
     /// Builds a connection string for a local, integrated-security connection.
     /// TrustServerCertificate is on because Microsoft.Data.SqlClient defaults to
     /// Encrypt=true, and a local developer instance normally has a self-signed
-    /// certificate. That is acceptable ONLY because the safety interlock
+    /// certificate. That is acceptable ONLY because the safety checks
     /// (SPEC section 3) confines this tool to localhost.
     /// </summary>
     public static string BuildConnectionString(string server, string database) =>

@@ -26,7 +26,8 @@ public static class MaskingConfigLoader
     private static readonly string[] DefaultsProperties =
         [Comment, "allowedServers", "unclassifiedColumns", "batchSize", "renameTo", "repairUsers"];
 
-    private static readonly string[] TableProperties = [Comment, "name", "strategy", "history", "columns"];
+    private static readonly string[] TableProperties =
+        [Comment, "name", "strategy", "history", "columns", "reason"];
 
     private static readonly string[] ColumnProperties = [Comment, "name", "strategy", "value", "reason"];
 
@@ -150,7 +151,7 @@ public static class MaskingConfigLoader
                     // Fail-closed would refuse every server, which is safe but
                     // useless; an empty allowlist is far more likely a mistake.
                     Add(ConfigErrorCodes.InvalidValue, $"{path}.allowedServers",
-                        "\"allowedServers\" is empty, so the safety interlock would refuse every server.",
+                        "\"allowedServers\" is empty, so the safety checks would refuse every server.",
                         "Remove the property to accept the default [\"localhost\", \".\", \"(local)\", \"127.0.0.1\"], "
                         + "or list the servers you mean.");
                 }
@@ -260,7 +261,8 @@ public static class MaskingConfigLoader
             }
 
             TableStrategy? strategy = null;
-            if (element.TryGetProperty("strategy", out var strategyElement))
+            var hasStrategyProperty = element.TryGetProperty("strategy", out var strategyElement);
+            if (hasStrategyProperty)
             {
                 strategy = ReadTableStrategy(strategyElement, $"{path}.strategy");
             }
@@ -286,15 +288,49 @@ public static class MaskingConfigLoader
                     "Drop \"columns\", or drop \"strategy\": \"truncate\" if the table should be masked instead.");
             }
 
-            if (strategy is null && !hasColumnsProperty)
+            // Table-level keep plus per-column strategies is REFUSED, and this
+            // one matters more than it looks. It reads as "keep everything
+            // except these" — but that means a column added to the table next
+            // quarter is silently kept, i.e. unprotected while looking decided.
+            // That is precisely the blind spot the UNCLASSIFIED list exists to
+            // expose, so the config must not be able to create it.
+            if (strategy == TableStrategy.Keep && columns.Count > 0)
+            {
+                Add(ConfigErrorCodes.Contradictory, $"{path}.columns",
+                    $"{qualifiedName} is \"keep\" at the table level, so per-column strategies contradict it.",
+                    "Drop \"columns\" if the whole table is clean. If only SOME columns are clean, list them "
+                    + "all individually — a table-level keep would silently cover new columns too.");
+            }
+
+            // Only when NO strategy was written at all. If one was written and
+            // rejected, the reader already has the real error — adding "asks
+            // for nothing" on top would be actively misleading, since they did
+            // ask for something.
+            if (strategy is null && !hasStrategyProperty && !hasColumnsProperty)
             {
                 Add(ConfigErrorCodes.Contradictory, path,
                     $"{qualifiedName} asks for nothing — no \"strategy\" and no \"columns\".",
-                    "Add \"strategy\": \"truncate\", or a \"columns\" list. To say \"this table is fine as-is\", "
-                    + "give each of its columns \"strategy\": \"keep\".");
+                    "Add \"strategy\": \"truncate\" to empty it, \"strategy\": \"keep\" with a \"reason\" if it "
+                    + "holds no PII, or a \"columns\" list.");
             }
 
-            return new TableConfig(parts.Value.Schema, parts.Value.Name, strategy, history, columns);
+            string? reason = null;
+            if (element.TryGetProperty("reason", out var reasonElement))
+            {
+                reason = ReadNonEmptyString(reasonElement, $"{path}.reason", "\"reason\"");
+            }
+
+            // A reason is REQUIRED for table-level keep. It is the difference
+            // between excluding a table and hiding it: one line of text turns a
+            // silenced row into a recorded decision the next reader can audit.
+            if (strategy == TableStrategy.Keep && reason is null)
+            {
+                Add(ConfigErrorCodes.MissingProperty, path,
+                    $"{qualifiedName} uses \"strategy\": \"keep\" but gives no \"reason\".",
+                    $"{{ \"name\": \"{qualifiedName}\", \"strategy\": \"keep\", \"reason\": \"reference data\" }}");
+            }
+
+            return new TableConfig(parts.Value.Schema, parts.Value.Name, strategy, history, columns, reason);
         }
 
         private IReadOnlyList<ColumnConfig> ReadColumns(JsonElement element, string path)
@@ -489,15 +525,21 @@ public static class MaskingConfigLoader
                 return null;
             }
 
-            if (element.GetString() == "truncate")
+            return element.GetString() switch
             {
-                return TableStrategy.Truncate;
-            }
+                "truncate" => TableStrategy.Truncate,
+                "keep" => TableStrategy.Keep,
+                var other => Reject(other),
+            };
 
-            Add(ConfigErrorCodes.InvalidValue, path,
-                $"Unknown table strategy \"{element.GetString()}\".",
-                "The only table-level strategy is \"truncate\". Per-column strategies go in \"columns\".");
-            return null;
+            TableStrategy? Reject(string? other)
+            {
+                Add(ConfigErrorCodes.InvalidValue, path,
+                    $"Unknown table strategy \"{other}\".",
+                    "Table-level strategies are \"truncate\" (empty it) and \"keep\" (no PII in this "
+                    + "table). Anything else goes per-column in \"columns\".");
+                return null;
+            }
         }
 
         private HistoryMode? ReadHistoryMode(JsonElement element, string path)

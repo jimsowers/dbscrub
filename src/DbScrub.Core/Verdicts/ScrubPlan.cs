@@ -18,6 +18,9 @@ public sealed record ScrubPlan(
 
     public IEnumerable<TablePlan> Masked => Tables.Where(t => t.Action == TableAction.Mask);
 
+    /// <summary>Tables declared clean in one line by a table-level `keep`.</summary>
+    public IEnumerable<TablePlan> KeptWholesale => Tables.Where(t => t.Action == TableAction.Keep);
+
     /// <summary>System-versioned tables need the SYSTEM_VERSIONING dance (SPEC 5.2).</summary>
     public IEnumerable<TablePlan> Temporal =>
         Tables.Where(t => t.Table.TemporalType == TemporalType.SystemVersioned);
@@ -58,6 +61,12 @@ public enum TableAction
 
     /// <summary>Table-level `strategy: "truncate"` (DECISIONS.md D5).</summary>
     Truncate,
+
+    /// <summary>
+    /// Table-level `strategy: "keep"` — declared clean in one line. Counted
+    /// separately in the report so a blanket exclusion stays visible.
+    /// </summary>
+    Keep,
 
     /// <summary>At least one column has a masking strategy.</summary>
     Mask,

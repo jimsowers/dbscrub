@@ -21,7 +21,7 @@ on github.com, then `git remote add origin <url> && git push -u origin main`.)
 Read CLAUDE.md, docs/SPEC.md, and docs/DECISIONS.md in full before writing any
 code — they encode decisions from a prior design session and are authoritative.
 
-This session is slice 1 only (per CLAUDE.md): scaffold the solution
+This session is step 1 only (per CLAUDE.md): scaffold the solution
 (src/DbScrub.Core, src/DbScrub.Cli, tests/DbScrub.Tests, .NET 8), then
 implement:
 
@@ -53,4 +53,4 @@ Invoke-DbaDbPiiScan -SqlInstance localhost -Database AAVSB | Out-GridView
 
 Fold the hits into your real config (copy masking.sample.json ->
 config/aavsb.masking.json). Also note which tables are temporal/CDC/audit —
-`dbscrub report` will confirm once slice 1 lands.
+`dbscrub report` will confirm once step 1 lands.
