@@ -1,14 +1,15 @@
 using System.Text;
 using DbScrub.Core.Configuration;
 using DbScrub.Core.Hygiene;
-using DbScrub.Core.Schema;
+using DbScrub.Core.Masking;
+using DbScrub.Core.Planning;
 using DbScrub.Core.Verdicts;
 
 namespace DbScrub.Core.Reporting;
 
 /// <summary>
-/// Renders a <see cref="ScrubPlan"/> as text (SPEC section 6): plan first, then
-/// the summary, then the UNCLASSIFIED block.
+/// Renders a <see cref="CleanPlan"/> as text (SPEC section 6): the steps in the
+/// order they run, then the summary, then the UNCLASSIFIED block.
 ///
 /// A pure string function, so the report is testable without a console and
 /// without a database. It also means the exact bytes a user will see are what
@@ -20,27 +21,32 @@ namespace DbScrub.Core.Reporting;
 /// </summary>
 public static class PlanReport
 {
-    public static string Render(ScrubPlan plan, string server, string configPath)
+    public static string Render(CleanPlan plan, string server, string configPath)
     {
         var builder = new StringBuilder();
 
         AppendHeader(builder, plan, server, configPath);
-        AppendSchemaFacts(builder, plan);
-        AppendHygiene(builder, plan);
-        AppendPlan(builder, plan);
+        AppendSchemaFacts(builder, plan.Scrub);
+
+        // The three phases in the order they execute. Printing them in any other
+        // order would hide the thing that makes the temporal case correct.
+        AppendHygiene(builder, plan.PreMask, "Before masking");
+        AppendMask(builder, plan);
+        AppendHygiene(builder, plan.PostMask, "After masking");
+
         AppendSummary(builder, plan);
         AppendProblems(builder, plan);
-        AppendUnclassified(builder, plan);
+        AppendUnclassified(builder, plan.Scrub);
 
         return builder.ToString();
     }
 
-    private static void AppendHeader(StringBuilder builder, ScrubPlan plan, string server, string configPath)
+    private static void AppendHeader(StringBuilder builder, CleanPlan plan, string server, string configPath)
     {
         builder.AppendLine("dbscrub report (read-only — nothing is modified)");
         builder.AppendLine();
         builder.AppendLine($"  Server    {server}");
-        builder.AppendLine($"  Database  {plan.Schema.DatabaseName}");
+        builder.AppendLine($"  Database  {plan.Scrub.Schema.DatabaseName}");
         builder.AppendLine($"  Config    {configPath}");
         builder.AppendLine();
     }
@@ -61,22 +67,18 @@ public static class PlanReport
     }
 
     /// <summary>
-    /// SPEC 5.2 — the steps that run BEFORE masking, because PII copies hide in
-    /// CDC capture tables and temporal history.
+    /// One phase of the hygiene pass, printed as the statements that will
+    /// ACTUALLY run rather than as a paraphrase. A report that paraphrases the
+    /// destructive step is a report you cannot check.
     /// </summary>
-    private static void AppendHygiene(StringBuilder builder, ScrubPlan plan)
+    private static void AppendHygiene(StringBuilder builder, IReadOnlyList<HygieneStep> steps, string heading)
     {
-        // Built by HygienePlanner rather than described separately here, so the
-        // report shows the statements that will ACTUALLY run. A report that
-        // paraphrases the destructive step is a report you cannot check.
-        var steps = HygienePlanner.Build(plan);
-
         if (steps.Count == 0)
         {
             return;
         }
 
-        builder.AppendLine($"Hygiene ({steps.Count} statement(s), run before masking)");
+        builder.AppendLine($"{heading} ({steps.Count} statement(s))");
 
         foreach (var step in steps)
         {
@@ -87,63 +89,83 @@ public static class PlanReport
         builder.AppendLine();
     }
 
-    private static void AppendPlan(StringBuilder builder, ScrubPlan plan)
+    private static void AppendMask(StringBuilder builder, CleanPlan plan)
     {
-        builder.AppendLine("Plan");
+        builder.AppendLine("Mask");
 
-        var actionable = plan.Tables
-            .Where(t => t.Action is TableAction.Truncate or TableAction.Mask)
-            .ToList();
-
-        if (actionable.Count == 0)
+        if (plan.Mask.Tables.Count == 0)
         {
-            builder.AppendLine("  (nothing — no table has a truncate or a masking strategy)");
+            builder.AppendLine("  (nothing — no column has a masking strategy)");
             builder.AppendLine();
             return;
         }
 
-        foreach (var table in actionable)
+        foreach (var table in plan.Mask.Tables)
         {
-            if (table.Action == TableAction.Truncate)
-            {
-                builder.AppendLine($"  TRUNCATE  {table.QualifiedName}");
-                continue;
-            }
+            builder.AppendLine($"  {table.QualifiedName}  ({table.Columns.Count} column(s), {Describe(table.Mode)})");
 
-            var masked = table.Columns.Where(c => c.Kind == VerdictKind.Masked).ToList();
-            builder.AppendLine($"  MASK      {table.QualifiedName}  ({masked.Count} of {table.Columns.Count} columns)");
-
-            var width = masked.Max(c => c.Column.Length);
-            foreach (var column in masked)
+            var width = table.Columns.Max(c => c.Name.Length);
+            foreach (var column in table.Columns)
             {
-                builder.AppendLine($"              {column.Column.PadRight(width)}  {Describe(column)}");
+                builder.AppendLine($"      {column.Name.PadRight(width)}  {Describe(column.Strategy)}");
             }
         }
 
         builder.AppendLine();
     }
 
-    private static string Describe(ColumnVerdict verdict) => verdict.Strategy switch
+    /// <summary>
+    /// How a table gets rewritten. Worth printing because the choice is made for
+    /// the reader, not by them, and the keyless case has a cost they should know
+    /// about before it runs against a large table.
+    /// </summary>
+    private static string Describe(MaskMode mode) => mode switch
+    {
+        MaskMode.RowByRow => "row by row, batched on the primary key",
+        MaskMode.BatchedConstant => "set-based, batched on the primary key",
+        MaskMode.WholeTable => "set-based, ONE transaction — this table has no primary key",
+        _ => mode.ToString(),
+    };
+
+    private static string Describe(ColumnStrategy strategy) => strategy switch
     {
         ColumnStrategy.Null => "null      set to NULL",
         ColumnStrategy.Scramble => "scramble  letters->x, digits->9, length preserved",
         ColumnStrategy.Static => "static    fixed replacement value",
-        _ => verdict.Strategy?.ToString() ?? string.Empty,
+        _ => strategy.ToString(),
     };
 
-    private static void AppendSummary(StringBuilder builder, ScrubPlan plan)
+    private static void AppendSummary(StringBuilder builder, CleanPlan plan)
     {
-        var kept = plan.Tables.SelectMany(t => t.Columns).Count(c => c.Kind == VerdictKind.Kept);
-
-        var keptWholesale = plan.KeptWholesale.ToList();
+        var scrub = plan.Scrub;
+        var kept = scrub.Tables.SelectMany(t => t.Columns).Count(c => c.Kind == VerdictKind.Kept);
+        var keptWholesale = scrub.KeptWholesale.ToList();
 
         builder.AppendLine("Summary");
-        builder.AppendLine($"  Tables truncated    {plan.Truncated.Count()}");
-        builder.AppendLine($"  Tables masked       {plan.Masked.Count()}");
-        builder.AppendLine($"  Columns masked      {plan.ColumnsToMask}");
+        builder.AppendLine($"  Tables truncated    {scrub.Truncated.Count()}");
+        builder.AppendLine($"  Tables masked       {plan.Mask.Tables.Count}");
+        builder.AppendLine($"  Columns masked      {plan.Mask.ColumnCount}");
         builder.AppendLine($"  Columns kept        {kept}");
-        builder.AppendLine($"  UNCLASSIFIED        {plan.Unclassified.Count}");
+        builder.AppendLine($"  UNCLASSIFIED        {scrub.Unclassified.Count}");
         builder.AppendLine();
+
+        // A table with no primary key is masked in one unbounded transaction.
+        // That is correct but can be very slow and very hard on the log on a
+        // large table, and it is not visible anywhere else in the output.
+        var unbatched = plan.Unbatched.ToList();
+        if (unbatched.Count > 0)
+        {
+            builder.AppendLine($"Masked in ONE transaction ({unbatched.Count}) — no primary key to batch on");
+            builder.AppendLine("  Fine for a small table. On a large one this holds a single long");
+            builder.AppendLine("  transaction; adding a primary key lets dbscrub batch it.");
+
+            foreach (var table in unbatched)
+            {
+                builder.AppendLine($"  {table.QualifiedName}");
+            }
+
+            builder.AppendLine();
+        }
 
         // A blanket exclusion is the one thing in this report that removes rows
         // from the UNCLASSIFIED list without anyone looking at a column. Listing
@@ -165,15 +187,17 @@ public static class PlanReport
         }
     }
 
-    private static void AppendProblems(StringBuilder builder, ScrubPlan plan)
+    private static void AppendProblems(StringBuilder builder, CleanPlan plan)
     {
-        if (plan.Problems.Count == 0)
+        var problems = plan.Problems;
+
+        if (problems.Count == 0)
         {
             return;
         }
 
-        builder.AppendLine($"Problems ({plan.Problems.Count}) — these block `clean`");
-        foreach (var problem in plan.Problems)
+        builder.AppendLine($"Problems ({problems.Count}) — these block `clean`");
+        foreach (var problem in problems)
         {
             builder.AppendLine($"  {problem.Code}: {problem.Message}");
             if (problem.Suggestion is not null)

@@ -4,8 +4,11 @@ Replaces real personal data in a locally restored SQL Server database with
 obvious fakes, so day-to-day development — including anything you paste into an
 AI tool — never touches real people's information.
 
-> **Not finished yet.** `report` and `status` work today and only ever read.
-> `clean`, the command that actually changes data, does not exist yet.
+> **Not finished yet.** `report` and `status` work and only ever read. `clean`
+> now masks data, but it does **not** yet mark the database as cleaned — the
+> verification step that earns that mark is still being built, and nothing may
+> call a database safe without it. So `dbscrub status` keeps answering "not
+> clean" even after a successful `clean`, on purpose.
 
 ---
 
@@ -79,6 +82,30 @@ dbscrub report --server <server> --database <name> --config <path>
 Reads the database, compares it to your config, and prints the plan: which
 tables get emptied, which columns get masked and how, plus everything still
 unclassified. Changes nothing.
+
+### `clean` — actually change the data
+
+```bash
+dbscrub clean --server <server> --database <name> --config <path> [--yes] [--dry-run] [--fail-on-unclassified]
+```
+
+Prints the same plan `report` does, asks you to type the database name, then
+runs it: empties the tables you marked `truncate`, masks the columns you
+configured, and handles the hidden history tables around both.
+
+| Flag | What it does |
+|---|---|
+| `--dry-run` | Print the plan and stop. Never prompts, so it is safe in a script |
+| `--yes` | Skip typing the database name. Only allowed for `localhost`, `.`, `127.0.0.1` (with or without an instance name) |
+| `--fail-on-unclassified` | Refuse to run while any column is still unclassified, whatever the config says |
+
+It refuses to start — before changing anything — if the server is not on your
+allowed list, if the database has already been cleaned, if the config asks for
+something the schema cannot do, or if you type the wrong name.
+
+**It does not mark the database as clean yet.** That happens once the
+verification step exists; until then `status` still reports "not clean" after a
+successful run. See the note at the top.
 
 ### `status` — is this copy safe?
 
@@ -166,6 +193,18 @@ except these" would silently cover new columns as well.
 `keep` matters more than it looks: it records that a decision *was made*, so the
 column stops appearing in the unclassified list. Use `reason` to say why.
 
+Two columns you cannot mask, both refused before anything runs:
+
+- **The primary key.** DbScrub rewrites a table by walking it in key order, so
+  changing the key underneath that walk would skip rows — and a skipped row keeps
+  its real values. Masked keys would also collide with each other and orphan
+  every row referencing them. Use `keep`.
+- **A `scramble` on a table with no primary key.** Scrambling turns each value
+  into a same-shaped fake, which means writing a different value to every row,
+  which means being able to point at one row. Without a key there is nothing to
+  point with. Add a key, or use `static`/`null` — those write the same value
+  everywhere and need no key.
+
 ### Other settings
 
 | Key | Default | Meaning |
@@ -214,9 +253,17 @@ entirely. If your SQL Server is a named instance, spell it out:
 in errors, not in verification output. The report describes what a column will
 become, never what it currently contains.
 
-Two more protections arrive with `clean`: you will have to type the database
-name to confirm, and a database that has already been cleaned is skipped rather
-than cleaned twice.
+**You have to type the database name.** `clean` prints what it is about to do,
+then asks you to reproduce the database name exactly. Pressing a key is muscle
+memory; typing a name from the summary is not. `--yes` skips it, but only on a
+server that is unambiguously your own machine — narrower than the allowed list.
+
+**A database that has already been cleaned is skipped**, not cleaned twice.
+
+**A run that could not rewrite every row fails.** Each table's row count is
+checked before and after. If they disagree, rows were left holding real values,
+so DbScrub reports failure rather than success — restore a fresh copy and run
+again.
 
 ---
 
@@ -237,7 +284,7 @@ than cleaned twice.
 
 `scripts/create-test-db.sql` builds a small database called `DbScrubTest` with
 fake data shaped like the real thing — a temporal table, change tracking, an
-audit table, computed and identity columns.
+audit table, computed and identity columns, and a table with no primary key.
 
 ```bash
 sqlcmd -S "localhost\MSSQLSERVER02" -E -i scripts\create-test-db.sql

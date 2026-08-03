@@ -51,6 +51,23 @@ public sealed record TablePlan(
 {
     public string QualifiedName => Table.QualifiedName;
 
+    /// <summary>
+    /// What happens to this table's temporal history (SPEC 5.2). Meaningful only
+    /// when <see cref="SchemaTable.TemporalType"/> is SystemVersioned; the
+    /// default is Truncate for everything else, which is also the default for a
+    /// temporal table nobody configured (DECISIONS.md D5).
+    ///
+    /// This is carried on the plan rather than looked up from the config later
+    /// because the hygiene pass decides whether to empty the history table, and
+    /// it only ever sees the plan. Before this existed the hygiene pass emptied
+    /// history unconditionally, so `history: "mask"` truncated instead of
+    /// masking — the config keyword read as intent that never happened.
+    /// </summary>
+    public HistoryMode History { get; init; } = HistoryMode.Truncate;
+
+    /// <summary>The columns this run will rewrite. Empty unless <see cref="Action"/> is Mask.</summary>
+    public IEnumerable<ColumnVerdict> MaskedColumns => Columns.Where(c => c.Kind == VerdictKind.Masked);
+
     public override string ToString() => $"{QualifiedName} [{Action}]";
 }
 
@@ -96,6 +113,16 @@ public sealed record ColumnVerdict(
     public string QualifiedTable => $"{Schema}.{Table}";
 
     public string QualifiedColumn => $"{Schema}.{Table}.{Column}";
+
+    /// <summary>
+    /// The config's `"value"` for a `static` column, carried through so the mask
+    /// planner does not have to re-find this column in the config and repeat the
+    /// name matching the resolver already did. Null for every other strategy.
+    ///
+    /// Deliberately the RAW config value, not a converted one: converting it
+    /// needs the live column type, which is the mask planner's job.
+    /// </summary>
+    public ConfigValue? Value { get; init; }
 
     public override string ToString() => $"{QualifiedColumn} -> {Kind}";
 }

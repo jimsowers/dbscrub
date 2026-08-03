@@ -1,4 +1,5 @@
 using DbScrub.Core.Configuration;
+using DbScrub.Core.Planning;
 using DbScrub.Core.Reporting;
 using DbScrub.Core.Verdicts;
 using DbScrub.Tests.Schema;
@@ -153,7 +154,7 @@ public class TableLevelKeepTests
                 { "name": "dbo.CountyCode", "strategy": "keep", "reason": "public codes" } ] }
             """);
 
-        var report = PlanReport.Render(plan, "localhost", "test.json");
+        var report = PlanReport.Render(CleanPlan.Build(plan), "localhost", "test.json");
 
         Assert.Contains("Excluded by a table-level \"keep\" (2)", report);
         Assert.Contains("dbo.StateCode", report);
@@ -171,7 +172,7 @@ public class TableLevelKeepTests
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """);
 
-        Assert.DoesNotContain("Excluded by a table-level", PlanReport.Render(plan, "localhost", "test.json"));
+        Assert.DoesNotContain("Excluded by a table-level", PlanReport.Render(CleanPlan.Build(plan), "localhost", "test.json"));
     }
 
     // ---- helpers -----------------------------------------------------------

@@ -19,6 +19,17 @@
         { "name": "Phone",     "strategy": "scramble" }
       ]
     },
-    { "name": "dbo.LoginAudit", "strategy": "truncate" }
+    { "name": "dbo.LoginAudit", "strategy": "truncate" },
+    {
+      "$comment": "A HEAP — no primary key. Every strategy here is the same for every row, which is what makes a keyless table maskable at all: one set-based UPDATE, one transaction. \"scramble\" would be refused here, because computing a replacement from a row's current value means addressing that row, and there is no key to address it by (DECISIONS.md D19).",
+      "name": "dbo.ContactImport",
+      "columns": [
+        { "name": "SourceFile",  "strategy": "keep",   "reason": "file name, not personal data" },
+        { "name": "Email",       "strategy": "static", "value": "dev@example.invalid" },
+        { "name": "Phone",       "strategy": "null" },
+        { "name": "Notes",       "strategy": "static", "value": "[redacted]" },
+        { "name": "ImportedUtc", "strategy": "keep",   "reason": "no PII, needed for queries" }
+      ]
+    }
   ]
 }

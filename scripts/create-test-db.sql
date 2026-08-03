@@ -113,6 +113,34 @@ CREATE TABLE dbo.LoginAudit
 GO
 
 /* ---------------------------------------------------------------------------
+   dbo.ContactImport — a HEAP. No primary key, no identity, no unique index.
+
+   This is the table that exercises SPEC 5.3's keyless fallback, and it exists
+   because every other table here has a key, which made that path unfixtured.
+
+   Without a key there is no way to address one row, so the mask engine cannot
+   batch and cannot compute a replacement from a row's current value. What it
+   CAN do is rewrite the whole table in one set-based UPDATE, which is correct
+   for any strategy whose replacement is the same on every row — `static` and
+   `null`. `scramble` on a table like this is refused at plan time rather than
+   approximated (DECISIONS.md D19), and the config below therefore uses static
+   and null on purpose.
+
+   Real-world shape: a staging table for a spreadsheet import, which is exactly
+   where a heap full of contact details tends to turn up.
+--------------------------------------------------------------------------- */
+CREATE TABLE dbo.ContactImport
+(
+    SourceFile  nvarchar(260)     NULL,
+    Email       nvarchar(256)     NULL,
+    Phone       varchar(20)       NULL,
+    Notes       nvarchar(max)     NULL,
+    ImportedUtc datetime2(3)  NOT NULL
+        CONSTRAINT DF_ContactImport_ImportedUtc DEFAULT SYSUTCDATETIME()
+);
+GO
+
+/* ---------------------------------------------------------------------------
    Seed data — fake, but shaped like the real thing.
 --------------------------------------------------------------------------- */
 INSERT INTO dbo.Person (FirstName, LastName, Email, Ssn, Phone, Notes)
@@ -143,6 +171,18 @@ VALUES
      N'{"event":"login","email":"ada.lovelace@example.invalid","ssn":"123-45-6789"}'),
     (N'grace.hopper@example.invalid', '10.0.0.8',
      N'{"event":"login","email":"grace.hopper@example.invalid","phone":"212-555-0101"}');
+GO
+
+/*  The heap. Deliberately more than one row with the SAME values in every
+    column: with no key there is nothing to tell those rows apart, which is the
+    situation the keyless fallback has to handle without losing or double-
+    counting anything.  */
+INSERT INTO dbo.ContactImport (SourceFile, Email, Phone, Notes)
+VALUES
+    (N'contacts-2024-01.csv', N'ada.lovelace@example.invalid', '212-555-0100', N'row 1'),
+    (N'contacts-2024-01.csv', N'grace.hopper@example.invalid', '212-555-0101', N'row 2'),
+    (N'contacts-2024-01.csv', N'grace.hopper@example.invalid', '212-555-0101', N'row 2'),
+    (N'contacts-2024-02.csv', N'alan.turing@example.invalid',  '212-555-0102', NULL);
 GO
 
 /* ---------------------------------------------------------------------------
@@ -187,7 +227,23 @@ LEFT  JOIN sys.tables  AS h ON h.object_id = t.history_table_id
 WHERE t.is_ms_shipped = 0
   AND s.name NOT IN ('sys', 'cdc', 'INFORMATION_SCHEMA')
 ORDER BY s.name, t.name;
+
+/*  Primary keys in KEY ORDER — what the mask engine batches on. dbo.PersonHistory
+    and dbo.ContactImport should be absent: SQL Server gives a history table a
+    clustered index rather than a primary key, and the heap has neither.  */
+SELECT s.name AS SchemaName,
+       t.name AS TableName,
+       ic.key_ordinal,
+       c.name AS KeyColumn
+FROM sys.indexes AS i
+INNER JOIN sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+INNER JOIN sys.columns AS c        ON c.object_id  = ic.object_id AND c.column_id = ic.column_id
+INNER JOIN sys.tables  AS t        ON t.object_id  = i.object_id
+INNER JOIN sys.schemas AS s        ON s.schema_id  = t.schema_id
+WHERE i.is_primary_key = 1
+  AND t.is_ms_shipped = 0
+ORDER BY s.name, t.name, ic.key_ordinal;
 GO
 
-PRINT 'DbScrubTest created. Expect 4 user tables: app.Enrollment, dbo.LoginAudit, dbo.Person, dbo.PersonHistory.';
+PRINT 'DbScrubTest created. Expect 5 user tables: app.Enrollment, dbo.ContactImport, dbo.LoginAudit, dbo.Person, dbo.PersonHistory.';
 GO

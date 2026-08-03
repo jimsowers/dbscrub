@@ -16,7 +16,8 @@ public class HygienePlannerTests
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """);
 
-        Assert.Empty(HygienePlanner.Build(plan));
+        Assert.Empty(PreMask(plan));
+        Assert.Empty(HygienePlanner.BuildPostMask(plan));
     }
 
     [Fact]
@@ -26,7 +27,7 @@ public class HygienePlannerTests
         // disabling would just add the masked versions alongside the originals.
         var schema = SchemaBuilder.Database().WithCdcEnabled().CdcTable("dbo.Person", "Email").Build();
 
-        var steps = HygienePlanner.Build(Plan(schema, """
+        var steps = PreMask(Plan(schema, """
             { "tables": [ { "name": "dbo.Person", "columns": [
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """));
@@ -38,39 +39,76 @@ public class HygienePlannerTests
     // ---- the versioning dance ---------------------------------------------
 
     [Fact]
-    public void ATemporalTableIsDetachedEmptiedAndReattachedInThatOrder()
+    public void VersioningIsDetachedBeforeMaskingAndReattachedOnlyAfterIt()
     {
-        // The order IS the correctness. While versioning is ON, every UPDATE
-        // writes the pre-update row into history — so masking without detaching
-        // first copies unmasked rows into history and reports success.
-        var steps = HygienePlanner.Build(TemporalPlan());
+        // THE test for this class. While versioning is ON, every UPDATE writes
+        // the pre-update row into history — so the reattach cannot sit next to
+        // the detach, or masking would run with versioning back on and refill
+        // history with exactly the rows the truncate just removed.
+        //
+        // The split between the two lists IS the interleaving: everything in the
+        // first runs before the mask engine, everything in the second after it.
+        var plan = TemporalPlan();
 
         Assert.Equal(
-            [
-                HygieneStepKind.DisableVersioning,
-                HygieneStepKind.TruncateHistory,
-                HygieneStepKind.ReEnableVersioning,
-            ],
-            steps.Select(s => s.Kind));
+            [HygieneStepKind.DisableVersioning, HygieneStepKind.TruncateHistory],
+            PreMask(plan).Select(s => s.Kind));
+
+        Assert.Equal(
+            [HygieneStepKind.ReEnableVersioning],
+            HygienePlanner.BuildPostMask(plan).Select(s => s.Kind));
+    }
+
+    [Fact]
+    public void EveryDetachedTableIsReattached()
+    {
+        // A table left detached would silently stop recording history for
+        // everything that touches it afterwards, and nothing about the database
+        // would look broken.
+        var schema = SchemaBuilder.Database()
+            .TemporalTable("dbo.Person", "dbo.PersonHistory", "Email")
+            .TemporalTable("app.Claim", "app.ClaimHistory", "Notes")
+            .Build();
+
+        var plan = Plan(schema, """
+            {
+              "tables": [
+                { "name": "dbo.Person", "columns": [ { "name": "Email", "strategy": "scramble" } ]},
+                { "name": "app.Claim",  "columns": [ { "name": "Notes", "strategy": "scramble" } ]}
+              ]
+            }
+            """);
+
+        var detached = PreMask(plan)
+            .Where(s => s.Kind == HygieneStepKind.DisableVersioning)
+            .Select(s => s.Target);
+
+        var reattached = HygienePlanner.BuildPostMask(plan)
+            .Where(s => s.Kind == HygieneStepKind.ReEnableVersioning)
+            .Select(s => s.Target);
+
+        Assert.Equal(detached.Order(), reattached.Order());
     }
 
     [Fact]
     public void TheVersioningStatementsNameTheRightTables()
     {
-        var steps = HygienePlanner.Build(TemporalPlan());
+        var plan = TemporalPlan();
+        var pre = PreMask(plan);
+        var post = HygienePlanner.BuildPostMask(plan);
 
-        Assert.Equal("ALTER TABLE [dbo].[Person] SET (SYSTEM_VERSIONING = OFF);", steps[0].Sql);
-        Assert.Equal("TRUNCATE TABLE [dbo].[PersonHistory];", steps[1].Sql);
-        Assert.Contains("SYSTEM_VERSIONING = ON", steps[2].Sql);
-        Assert.Contains("HISTORY_TABLE = [dbo].[PersonHistory]", steps[2].Sql);
+        Assert.Equal("ALTER TABLE [dbo].[Person] SET (SYSTEM_VERSIONING = OFF);", pre[0].Sql);
+        Assert.Equal("TRUNCATE TABLE [dbo].[PersonHistory];", pre[1].Sql);
+        Assert.Contains("SYSTEM_VERSIONING = ON", post[0].Sql);
+        Assert.Contains("HISTORY_TABLE = [dbo].[PersonHistory]", post[0].Sql);
     }
 
     [Fact]
     public void ReattachingSkipsTheConsistencyCheck()
     {
-        // The history table is empty at that point, so there is nothing to
-        // check and the check is expensive.
-        Assert.Contains("DATA_CONSISTENCY_CHECK = OFF", HygienePlanner.Build(TemporalPlan())[2].Sql);
+        // The check is an expensive scan of history, and nothing this run does
+        // can break the invariant it verifies.
+        Assert.Contains("DATA_CONSISTENCY_CHECK = OFF", HygienePlanner.BuildPostMask(TemporalPlan())[0].Sql);
     }
 
     [Fact]
@@ -80,13 +118,41 @@ public class HygienePlannerTests
             .TemporalTable("app.Person", "app.PersonHistory", "Email")
             .Build();
 
-        var steps = HygienePlanner.Build(Plan(schema, """
+        var steps = PreMask(Plan(schema, """
             { "tables": [ { "name": "app.Person", "columns": [
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """));
 
         Assert.Equal("ALTER TABLE [app].[Person] SET (SYSTEM_VERSIONING = OFF);", steps[0].Sql);
         Assert.Equal("TRUNCATE TABLE [app].[PersonHistory];", steps[1].Sql);
+    }
+
+    [Fact]
+    public void HistoryIsNotEmptiedWhenTheConfigAsksForItToBeMasked()
+    {
+        // Emptying it here would make `history: "mask"` a setting that reads as
+        // intent and silently does the opposite. The rows have to survive the
+        // hygiene pass in order to be masked by the pass after it.
+        var schema = SchemaBuilder.Database()
+            .TemporalTable("dbo.Person", "dbo.PersonHistory", "Email")
+            .WithPrimaryKeyOn("dbo.Person", "PersonId")
+            .Build();
+
+        var steps = PreMask(Plan(schema, """
+            { "tables": [ { "name": "dbo.Person", "history": "mask", "columns": [
+                { "name": "Email", "strategy": "static", "value": "dev@example.invalid" } ]} ] }
+            """));
+
+        Assert.Equal([HygieneStepKind.DisableVersioning], steps.Select(s => s.Kind));
+
+        // Still detached and still reattached — masking history requires
+        // versioning off just as much as masking the parent does.
+        Assert.Equal(
+            [HygieneStepKind.ReEnableVersioning],
+            HygienePlanner.BuildPostMask(Plan(schema, """
+                { "tables": [ { "name": "dbo.Person", "history": "mask", "columns": [
+                    { "name": "Email", "strategy": "static", "value": "dev@example.invalid" } ]} ] }
+                """)).Select(s => s.Kind));
     }
 
     // ---- truncation --------------------------------------------------------
@@ -99,7 +165,7 @@ public class HygienePlannerTests
         // works, and audit tables are emptied for correctness, not speed.
         var schema = SchemaBuilder.Database().Table("dbo.LoginAudit", "Id").Build();
 
-        var step = Assert.Single(HygienePlanner.Build(Plan(schema,
+        var step = Assert.Single(PreMask(Plan(schema,
             """{ "tables": [ { "name": "dbo.LoginAudit", "strategy": "truncate" } ] }""")));
 
         Assert.Equal(HygieneStepKind.TruncateTable, step.Kind);
@@ -114,7 +180,7 @@ public class HygienePlannerTests
             .Table("dbo.LoginAudit", "Id")
             .Build();
 
-        var steps = HygienePlanner.Build(Plan(schema,
+        var steps = PreMask(Plan(schema,
             """{ "tables": [ { "name": "dbo.LoginAudit", "strategy": "truncate" } ] }"""));
 
         Assert.Equal(HygieneStepKind.DisableChangeTracking, steps[0].Kind);
@@ -126,7 +192,7 @@ public class HygienePlannerTests
     {
         var schema = SchemaBuilder.Database().Table("dbo.StateCode", "Code").Build();
 
-        Assert.Empty(HygienePlanner.Build(Plan(schema, """
+        Assert.Empty(PreMask(Plan(schema, """
             { "tables": [ { "name": "dbo.StateCode", "strategy": "keep", "reason": "reference data" } ] }
             """)));
     }
@@ -144,7 +210,7 @@ public class HygienePlannerTests
             .Table("dbo.LoginAudit", "Id")
             .Build();
 
-        var steps = HygienePlanner.Build(Plan(schema, """
+        var plan = Plan(schema, """
             {
               "tables": [
                 { "name": "dbo.Person", "columns": [
@@ -152,7 +218,9 @@ public class HygienePlannerTests
                 { "name": "dbo.LoginAudit", "strategy": "truncate" }
               ]
             }
-            """));
+            """);
+
+        var steps = PreMask(plan).Concat(HygienePlanner.BuildPostMask(plan));
 
         Assert.All(steps, s =>
         {
@@ -167,14 +235,53 @@ public class HygienePlannerTests
     {
         // A human approves this list before it runs, so the description has to
         // stand on its own.
-        Assert.All(HygienePlanner.Build(TemporalPlan()), s =>
+        var plan = TemporalPlan();
+        var steps = PreMask(plan).Concat(HygienePlanner.BuildPostMask(plan));
+
+        Assert.All(steps, s =>
         {
             Assert.False(string.IsNullOrWhiteSpace(s.Description));
             Assert.False(string.IsNullOrWhiteSpace(s.Target));
         });
     }
 
+    // ---- preflight ---------------------------------------------------------
+
+    [Fact]
+    public void SimpleRecoveryIsSetBeforeAnythingElse()
+    {
+        // SPEC 5.1. Under FULL recovery the log has to hold the whole run,
+        // because nobody backs up a disposable local copy — so batching buys
+        // nothing unless this comes first.
+        var steps = HygienePlanner.BuildPreMask(TemporalPlan());
+
+        Assert.Equal(HygieneStepKind.SetSimpleRecovery, steps[0].Kind);
+        Assert.Equal("ALTER DATABASE [AAVSB] SET RECOVERY SIMPLE;", steps[0].Sql);
+    }
+
+    [Fact]
+    public void SimpleRecoveryIsSetEvenWhenThereIsNoOtherHygiene()
+    {
+        var plan = Plan(SchemaBuilder.Database().Table("dbo.Person", "Email").Build(), """
+            { "tables": [ { "name": "dbo.Person", "columns": [
+                { "name": "Email", "strategy": "static", "value": "x" } ]} ] }
+            """);
+
+        Assert.Equal([HygieneStepKind.SetSimpleRecovery],
+            HygienePlanner.BuildPreMask(plan).Select(s => s.Kind));
+    }
+
     // ---- helpers -----------------------------------------------------------
+
+    /// <summary>
+    /// The pre-mask steps WITHOUT the SIMPLE-recovery preflight, which is
+    /// asserted on its own above. Dropping it here keeps every other test about
+    /// the thing it is named after rather than about an index shift.
+    /// </summary>
+    private static IReadOnlyList<HygieneStep> PreMask(ScrubPlan plan) =>
+        HygienePlanner.BuildPreMask(plan)
+            .Where(s => s.Kind != HygieneStepKind.SetSimpleRecovery)
+            .ToList();
 
     private static ScrubPlan Plan(Core.Schema.DatabaseSchema schema, string configJson) =>
         VerdictResolver.Resolve(schema, MaskingConfigLoader.Parse(configJson, "test"));

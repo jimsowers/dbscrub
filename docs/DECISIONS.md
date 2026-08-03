@@ -255,6 +255,121 @@ override flag) and the typed confirmation for every interactive run. `--yes`
 was always an escape hatch for scripted local use; this makes the escape hatch
 work on the machines that actually exist.
 
+## D19 — The mask engine writes per-row UPDATEs, not a table-valued parameter,
+## and refuses `scramble` on a table with no primary key
+
+SPEC 5.3 specifies "single UPDATE ... FROM @tvp per batch". Two parts of the
+mask engine ended up elsewhere. Both are recorded here rather than silently
+diverging.
+
+**No TVP.** A table-valued parameter needs a user-defined TABLE TYPE created in
+the target database, one per distinct key-and-column shape. That is DDL the tool
+otherwise never performs, it persists after a crashed run, and it needs rights
+beyond the ones masking itself needs. What replaced it: a batch is one command
+containing N single-row `UPDATE ... WHERE <key> = @k` statements, all
+parameterized, sent in one round trip inside one transaction. The cost is real —
+SQL Server refuses a command carrying more than 2100 parameters, so the
+configured `batchSize` is capped by (key columns + computed columns) per row,
+which `MaskSql.RowsPerCommand` computes. The gain is that the tool creates no
+objects in the database it is cleaning, and that every statement it sends is a
+string a test can assert on.
+
+**Constant strategies never read a row.** `null` and `static` write the same
+value to every row, so a table whose masked columns are all constant is rewritten
+set-based, with the key walk kept only to bound each transaction. This is why
+there are three modes rather than one; the report names the mode per table.
+
+**`scramble` requires a key, and is refused without one.** SPEC 5.3 offers a
+keyless fallback of "a single set-based UPDATE per column", noting that
+"scramble/static/null are all expressible in T-SQL". That is true of `null` and
+`static` and NOT true of `scramble`. The closest T-SQL equivalent is `TRANSLATE`
+over an explicit alphabet, which handles ASCII and leaves every accented and
+non-Latin letter untouched — it would report success while preserving exactly the
+characters most likely to identify someone. That is the same class of bug the
+fixture caught in the C# scrambler once already (combining accents surviving,
+HANDOFF step 3).
+
+Options considered:
+1. `TRANSLATE` — rejected, silently leaks non-ASCII.
+2. Rewrite by distinct value (`UPDATE t SET c = @new WHERE c = @old`) — works
+   without a key and is correct, but is one unindexed scan per distinct value.
+   On a high-cardinality column that is quadratic, and a destructive tool with a
+   silent performance cliff is worse than one that refuses.
+3. Refuse at plan time. CHOSEN.
+
+The refusal names both fixes: add a primary key, or use `static`/`null`. It
+lands before anything is modified, which is the point of a separate planning
+pass — the same problem found by the executor would surface on table seven of
+twelve, leaving a database that is neither raw nor clean.
+
+Consequence for temporal history: SQL Server gives a history table a clustered
+index, never a primary key, so `history: "mask"` works only when the parent's
+strategies are all constant. Where it isn't, the answer is the default —
+`truncate` (D5).
+
+Revisit if a real database turns up a keyless table that genuinely needs
+`scramble`; option 2 becomes reasonable once there is a row count to size it
+against.
+
+## D20 — A primary key column is never masked
+
+Not in the spec, added while building the engine. Any strategy other than `keep`
+on a key column is a plan-time refusal, for three independently fatal reasons:
+
+1. The engine walks a table in key order to batch it. Rewriting the key
+   underneath that walk moves rows relative to the cursor — some get visited
+   twice, some never. "Never" means a row that keeps its real values while the
+   run reports success.
+2. Masking collapses distinct values onto shared ones. Every scrambled 9-digit
+   key becomes `999999999`, and the second row violates the key.
+3. Anything with a foreign key pointing at it is orphaned.
+
+A natural key made of personal data (an SSN primary key) is therefore refused
+rather than masked. That is the correct answer for this tool: it cannot fix that
+schema, and pretending to would produce a broken database instead of a clean one.
+The honest fix is a surrogate key, which is out of scope for a masking tool.
+
+Because an IDENTITY column is usually also the key, the key check runs first and
+returns, so one mistake produces one error rather than two.
+
+## D21 — A run that reconciles row counts, because a skipped row is silent
+
+The batching predicate is the one piece of generated SQL whose bug would not
+raise an error. A wrong comparison skips rows; a skipped row is not an exception,
+it is a row that keeps its real values.
+
+So each table is counted immediately before its walk begins, and the rows the
+walk rewrote are compared against that count afterwards. A mismatch fails the
+run (exit 1) with the table named. It costs one `COUNT_BIG(*)` per masked table
+and converts the worst available failure mode — silent partial masking — into a
+loud one.
+
+`COUNT_BIG` rather than `COUNT` because `COUNT` returns `int` and overflows past
+2.1 billion rows, and an error inside the check that proves a run was complete is
+still a failed run.
+
+## D22 — `clean` ships before verify, and says so instead of stamping
+
+Step 4 delivers `clean` with the hygiene pass, the mask engine, and both safety
+checks. It does NOT verify, stamp, rename, or repair users — those are step 5,
+and CLAUDE.md permits a stamp only after a clean verify pass.
+
+The tempting alternative was to stamp anyway, since the masking is real and a
+`clean` that leaves the database "not sanitized" looks unfinished. Rejected: the
+stamp is the entire clean/dirty signal since D10 removed the naming distinction,
+and a stamp written without the check that earns it makes `dbscrub status` — and
+later the read-only Guard — confidently wrong. An unstamped database costs a
+re-run; a wrongly stamped one is a database everybody believes is safe.
+
+So a successful `clean` exits 0, prints what it rewrote, and states plainly that
+the database is NOT stamped and why. `--rename-to` and `--replace` are not wired
+at all rather than accepted and ignored, since SPEC 5.5 renames only after a
+clean verify pass.
+
+Also deliberately absent from this step: `history: "mask"` is now honored rather
+than silently truncated. The hygiene pass emptied history unconditionally, so
+that config keyword had been reading as intent and doing the opposite.
+
 ## Roadmap
 
 - **v0** (this repo, now): spec in SPEC.md.
