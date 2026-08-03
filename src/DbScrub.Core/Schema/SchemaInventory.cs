@@ -4,13 +4,14 @@ using Microsoft.Data.SqlClient;
 namespace DbScrub.Core.Schema;
 
 /// <summary>
-/// The one place sys.* is queried (CLAUDE.md). Three reads, no ORM:
-/// the database-level CDC flag, the table list, then all columns.
+/// The one place sys.* is queried (CLAUDE.md). Four reads, no ORM:
+/// the database-level CDC flag, the table list, all columns, then all primary
+/// key columns.
 ///
-/// Why three queries rather than one join: the table list and the column list
-/// are different grains, and joining them means re-materializing table rows per
-/// column and de-duplicating in memory. Two flat reads plus a dictionary lookup
-/// is less code and less surprising.
+/// Why separate queries rather than one join: the table list, the column list
+/// and the key list are different grains, and joining them means
+/// re-materializing table rows per column and de-duplicating in memory. Flat
+/// reads plus a dictionary lookup is less code and less surprising.
 ///
 /// Note on parameters: these queries take NO user input at all — no table or
 /// column name from the config reaches them, because the inventory reads
@@ -77,6 +78,31 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
         ORDER BY s.name, t.name, c.column_id;
         """;
 
+    private const string PrimaryKeysSql = """
+        SELECT  s.name  AS SchemaName,
+                t.name  AS TableName,
+                c.name  AS ColumnName
+        FROM sys.indexes AS i
+        INNER JOIN sys.index_columns AS ic ON ic.object_id = i.object_id
+                                          AND ic.index_id  = i.index_id
+        INNER JOIN sys.columns AS c  ON c.object_id = ic.object_id
+                                    AND c.column_id = ic.column_id
+        INNER JOIN sys.tables  AS t  ON t.object_id = i.object_id
+        INNER JOIN sys.schemas AS s  ON s.schema_id = t.schema_id
+        WHERE i.is_primary_key = 1
+          -- Included columns are stored in the leaf pages but are NOT part of
+          -- the key, so they cannot be seeked on or ordered by. A primary key
+          -- never has them, but the join above would happily return them if one
+          -- ever did, and an extra "key" column would corrupt the walk.
+          AND ic.is_included_column = 0
+          AND t.is_ms_shipped = 0
+          AND s.name NOT IN ('sys', 'cdc', 'INFORMATION_SCHEMA')
+        -- key_ordinal is the declared position within the key. Ordering by it is
+        -- the whole point of this query: the mask engine's batching predicate is
+        -- only correct if it compares columns in key order.
+        ORDER BY s.name, t.name, ic.key_ordinal;
+        """;
+
     public async Task<DatabaseSchema> ReadAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = new SqlConnection(connectionString);
@@ -84,7 +110,8 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
 
         var (databaseName, isCdcEnabled) = await ReadDatabaseAsync(connection, cancellationToken);
         var columnsByTable = await ReadColumnsAsync(connection, cancellationToken);
-        var tables = await ReadTablesAsync(connection, columnsByTable, cancellationToken);
+        var keysByTable = await ReadPrimaryKeysAsync(connection, cancellationToken);
+        var tables = await ReadTablesAsync(connection, columnsByTable, keysByTable, cancellationToken);
 
         return new DatabaseSchema(databaseName, isCdcEnabled, tables);
     }
@@ -145,9 +172,42 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
         return byTable;
     }
 
+    /// <summary>
+    /// The ordered key columns of every primary key in the database, grouped by
+    /// table. Tables with no primary key simply do not appear, which is what
+    /// leaves <see cref="SchemaTable.PrimaryKey"/> empty for a heap.
+    /// </summary>
+    private static async Task<Dictionary<string, List<string>>> ReadPrimaryKeysAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var byTable = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        await using var command = new SqlCommand(PrimaryKeysSql, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var key = $"{reader.GetString(0)}.{reader.GetString(1)}";
+
+            if (!byTable.TryGetValue(key, out var columns))
+            {
+                columns = [];
+                byTable[key] = columns;
+            }
+
+            // Appended in the order the query returned them, which is
+            // key_ordinal order. Never sort this list afterwards.
+            columns.Add(reader.GetString(2));
+        }
+
+        return byTable;
+    }
+
     private static async Task<List<SchemaTable>> ReadTablesAsync(
         SqlConnection connection,
         Dictionary<string, List<SchemaColumn>> columnsByTable,
+        Dictionary<string, List<string>> keysByTable,
         CancellationToken cancellationToken)
     {
         var tables = new List<SchemaTable>();
@@ -169,7 +229,10 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
                 IsTrackedByCdc: reader.GetBoolean(3),
                 HistorySchema: reader.IsDBNull(4) ? null : reader.GetString(4),
                 HistoryName: reader.IsDBNull(5) ? null : reader.GetString(5),
-                Columns: columnsByTable.TryGetValue(key, out var columns) ? columns : []));
+                Columns: columnsByTable.TryGetValue(key, out var columns) ? columns : [])
+            {
+                PrimaryKey = keysByTable.TryGetValue(key, out var keyColumns) ? keyColumns : [],
+            });
         }
 
         return tables;

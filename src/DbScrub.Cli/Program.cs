@@ -1,4 +1,5 @@
 using System.CommandLine;
+using DbScrub.Core.Execution;
 using DbScrub.Core.Schema;
 using DbScrub.Core.Stamp;
 
@@ -8,10 +9,16 @@ namespace DbScrub.Cli;
 /// Command wiring only (SPEC section 2). Every option lives here; every
 /// decision lives in Core.
 ///
-/// Both commands wired here are READ-ONLY. `clean` is deliberately absent
-/// until the steps that make it safe exist — the hygiene pass, the mask engine,
-/// and the verify gate. A half-wired `clean` is exactly the accident this tool
-/// exists to prevent.
+/// `report` and `status` are read-only. `clean` modifies, and every dependency
+/// it needs to do so is injected from here — the schema reader, the stamp
+/// reader, the session that owns the writes, and even the console read for the
+/// typed confirmation. That is what lets the whole command, including its
+/// refusals, be tested without a SQL Server anywhere near it.
+///
+/// NOT wired: --rename-to and --replace. SPEC section 2 lists them, and they are
+/// deliberately absent until step 5, because SPEC 5.5 renames only after a clean
+/// verify pass and there is no verify gate yet. An option that silently did
+/// nothing would be worse than a "command not recognized".
 /// </summary>
 internal static class Program
 {
@@ -78,10 +85,55 @@ internal static class Program
             error: Console.Error,
             cancellationToken: cancellationToken));
 
+        var yesOption = new Option<bool>("--yes")
+        {
+            Description = "Skip the typed confirmation. Allowed only for localhost, ., or 127.0.0.1 "
+                + "(SPEC 3.2) — never for a remote server, whatever the allowlist says.",
+        };
+
+        var dryRunOption = new Option<bool>("--dry-run")
+        {
+            Description = "Print the plan and stop. Identical to `report`, but reached through clean's "
+                + "own preflight, so it also proves the safety checks would pass.",
+        };
+
+        var failOnUnclassifiedOption = new Option<bool>("--fail-on-unclassified")
+        {
+            Description = "Refuse to run while any column has no verdict, whatever the config says. "
+                + "Tightens the config; there is no flag that loosens it.",
+        };
+
+        var cleanCommand = new Command("clean",
+            "Mask the database in place. The only command that modifies anything.")
+        {
+            serverOption,
+            databaseOption,
+            configOption,
+            yesOption,
+            dryRunOption,
+            failOnUnclassifiedOption,
+        };
+
+        cleanCommand.SetAction((parseResult, cancellationToken) => CleanCommand.RunAsync(
+            server: parseResult.GetValue(serverOption)!,
+            database: parseResult.GetValue(databaseOption)!,
+            configPath: parseResult.GetValue(configOption)!,
+            yes: parseResult.GetValue(yesOption),
+            dryRun: parseResult.GetValue(dryRunOption),
+            failOnUnclassified: parseResult.GetValue(failOnUnclassifiedOption),
+            schemaReaderFactory: connectionString => new SchemaInventory(connectionString),
+            stampReaderFactory: connectionString => new StampReader(connectionString),
+            sessionFactory: connectionString => new SqlCleanSession(connectionString),
+            output: Console.Out,
+            error: Console.Error,
+            readLine: Console.ReadLine,
+            cancellationToken: cancellationToken));
+
         var root = new RootCommand("dbscrub — scrub PII from a locally restored SQL Server database.")
         {
             reportCommand,
             statusCommand,
+            cleanCommand,
         };
 
         return await root.Parse(args).InvokeAsync();

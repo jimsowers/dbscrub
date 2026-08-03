@@ -1,4 +1,5 @@
 using DbScrub.Core.Configuration;
+using DbScrub.Core.Planning;
 using DbScrub.Core.Reporting;
 using DbScrub.Core.Safety;
 using DbScrub.Core.Schema;
@@ -76,7 +77,7 @@ internal static class ReportCommand
             return ExitCode.UnexpectedError;
         }
 
-        var plan = VerdictResolver.Resolve(schema, config);
+        var plan = CleanPlan.Build(VerdictResolver.Resolve(schema, config));
         output.Write(PlanReport.Render(plan, server, configPath));
 
         return ResolveExitCode(plan, config, error);
@@ -88,7 +89,7 @@ internal static class ReportCommand
     /// cannot serve as the CI gate that DECISIONS.md D6 wants once the
     /// inventory is complete.
     /// </summary>
-    private static int ResolveExitCode(ScrubPlan plan, MaskingConfig config, TextWriter error)
+    private static int ResolveExitCode(CleanPlan plan, MaskingConfig config, TextWriter error)
     {
         if (plan.Problems.Count > 0)
         {
@@ -96,10 +97,10 @@ internal static class ReportCommand
             return ExitCode.ConfigInvalid;
         }
 
-        if (config.Defaults.UnclassifiedColumns == UnclassifiedMode.Fail && !plan.IsFullyClassified)
+        if (config.Defaults.UnclassifiedColumns == UnclassifiedMode.Fail && !plan.Scrub.IsFullyClassified)
         {
             error.WriteLine(
-                $"{plan.Unclassified.Count} unclassified column(s) and unclassifiedColumns is \"fail\".");
+                $"{plan.Scrub.Unclassified.Count} unclassified column(s) and unclassifiedColumns is \"fail\".");
             return ExitCode.Unclassified;
         }
 

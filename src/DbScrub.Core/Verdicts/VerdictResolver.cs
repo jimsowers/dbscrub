@@ -39,7 +39,18 @@ public static class VerdictResolver
         foreach (var table in schema.Tables)
         {
             configByTable.Remove(table.QualifiedName, out var tableConfig);
-            plans.Add(ResolveTable(table, tableConfig, historyTables, problems, unclassified));
+            var tablePlan = ResolveTable(table, tableConfig, historyTables, problems, unclassified);
+
+            // Applied here rather than inside ResolveTable because every one of
+            // its several exits would otherwise have to remember to carry it,
+            // and the one that forgot would silently truncate history that the
+            // config asked to mask.
+            if (tableConfig is not null)
+            {
+                tablePlan = tablePlan with { History = tableConfig.History };
+            }
+
+            plans.Add(tablePlan);
         }
 
         // Whatever is left in the dictionary is configured but not present.
@@ -147,7 +158,10 @@ public static class VerdictResolver
             anyMasked |= kind == VerdictKind.Masked;
 
             columns.Add(new ColumnVerdict(
-                table.Schema, table.Name, column.Name, kind, columnConfig.Strategy, columnConfig.Reason));
+                table.Schema, table.Name, column.Name, kind, columnConfig.Strategy, columnConfig.Reason)
+            {
+                Value = columnConfig.Value,
+            });
         }
 
         // Columns configured but absent from the table — same danger as a stale
@@ -178,6 +192,37 @@ public static class VerdictResolver
         List<ConfigError> problems)
     {
         var path = $"tables[{table.QualifiedName}].columns[{column.Name}]";
+
+        // A primary key column is refused before anything else, and this one is
+        // worth spelling out because all three reasons are independently fatal:
+        //
+        //   1. The mask engine walks a table in key order to batch it. Rewriting
+        //      the key underneath that walk moves rows around the cursor — some
+        //      get visited twice, some never, and "never" means a row that keeps
+        //      its real values while the run reports success.
+        //   2. Masking collapses distinct values onto shared ones. Every
+        //      scrambled 9-digit key becomes 999999999, so the second row
+        //      violates the key.
+        //   3. Anything with a foreign key pointing at it loses its parent.
+        //
+        // The right answer is always the same: a key is a reference, not
+        // personal data, so it gets `keep`.
+        if (config.Strategy != ColumnStrategy.Keep && table.IsKeyColumn(column.Name))
+        {
+            problems.Add(new ConfigError(
+                ConfigErrorCodes.InvalidValue,
+                path,
+                $"{table.QualifiedName}.{column.Name} is part of the primary key and cannot be masked.",
+                "Use \"keep\". A key identifies a row to other rows; changing it breaks those references, "
+                + "and the mask engine batches in key order, so rewriting the key would skip rows.",
+                Line: 0,
+                Column: 0));
+
+            // One error per column. The writable check below would fire a second
+            // time for the common case of an IDENTITY primary key, and two
+            // complaints about one line reads as two problems.
+            return;
+        }
 
         if (config.Strategy == ColumnStrategy.Null && !column.IsNullable)
         {

@@ -29,9 +29,11 @@ public class ReportCommandTests : IDisposable
     public async Task AFullyClassifiedSchemaExitsZero()
     {
         var result = await RunAsync(
-            SchemaBuilder.Database().Table("dbo.Person", "Email").Build(),
+            SchemaBuilder.Database().Table("dbo.Person", "PersonId", "Email")
+                .WithPrimaryKey("PersonId").Build(),
             """
             { "tables": [ { "name": "dbo.Person", "columns": [
+                { "name": "PersonId", "strategy": "keep", "reason": "surrogate key" },
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """);
 
@@ -45,14 +47,15 @@ public class ReportCommandTests : IDisposable
         // v0 default is warn (DECISIONS.md D6) — the run proceeds and the list
         // is printed loudly.
         var result = await RunAsync(
-            SchemaBuilder.Database().Table("dbo.Person", "Email", "Nickname").Build(),
+            SchemaBuilder.Database().Table("dbo.Person", "PersonId", "Email", "Nickname")
+                .WithPrimaryKey("PersonId").Build(),
             """
             { "tables": [ { "name": "dbo.Person", "columns": [
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """);
 
         Assert.Equal(ExitCode.Success, result.ExitCode);
-        Assert.Contains("UNCLASSIFIED columns (1)", result.Output);
+        Assert.Contains("UNCLASSIFIED columns (2)", result.Output);
     }
 
     [Fact]
@@ -61,7 +64,8 @@ public class ReportCommandTests : IDisposable
         // This is what makes `report` usable as the CI gate D6 wants once the
         // inventory is complete. A report that always exits 0 gates nothing.
         var result = await RunAsync(
-            SchemaBuilder.Database().Table("dbo.Person", "Email", "Nickname").Build(),
+            SchemaBuilder.Database().Table("dbo.Person", "PersonId", "Email", "Nickname")
+                .WithPrimaryKey("PersonId").Build(),
             """
             {
               "defaults": { "unclassifiedColumns": "fail" },
@@ -143,10 +147,12 @@ public class ReportCommandTests : IDisposable
         var result = await RunAsync(
             SchemaBuilder.Database()
                 .WithCdcEnabled()
-                .TemporalTable("dbo.Person", "dbo.PersonHistory", "Email")
+                .TemporalTable("dbo.Person", "dbo.PersonHistory", "PersonId", "Email")
+                .WithPrimaryKeyOn("dbo.Person", "PersonId")
                 .Build(),
             """
             { "tables": [ { "name": "dbo.Person", "columns": [
+                { "name": "PersonId", "strategy": "keep", "reason": "surrogate key" },
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """);
 
@@ -160,17 +166,45 @@ public class ReportCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ThePhasesArePrintedInTheOrderTheyRun()
+    {
+        // The detach must appear before the mask section and the reattach after
+        // it. A reader approves this text; if it showed the three temporal steps
+        // together they would approve a sequence that is not the one that runs.
+        var result = await RunAsync(
+            SchemaBuilder.Database()
+                .TemporalTable("dbo.Person", "dbo.PersonHistory", "PersonId", "Email")
+                .WithPrimaryKeyOn("dbo.Person", "PersonId")
+                .Build(),
+            """
+            { "tables": [ { "name": "dbo.Person", "columns": [
+                { "name": "PersonId", "strategy": "keep", "reason": "surrogate key" },
+                { "name": "Email", "strategy": "scramble" } ]} ] }
+            """);
+
+        var detach = result.Output.IndexOf("SYSTEM_VERSIONING = OFF", StringComparison.Ordinal);
+        var mask = result.Output.IndexOf("Mask", StringComparison.Ordinal);
+        var reattach = result.Output.IndexOf("SYSTEM_VERSIONING = ON", StringComparison.Ordinal);
+
+        Assert.True(detach < mask && mask < reattach,
+            $"Expected detach ({detach}) before Mask ({mask}) before reattach ({reattach}).");
+        Assert.Contains("Before masking", result.Output);
+        Assert.Contains("After masking", result.Output);
+    }
+
+    [Fact]
     public async Task ThePlanListsTruncatesAndMasksWithStrategies()
     {
         var result = await RunAsync(
             SchemaBuilder.Database()
-                .Table("dbo.Person", "Email", "Notes")
-                .Table("dbo.LoginAudit", "Id")
+                .Table("dbo.Person", "PersonId", "Email", "Notes").WithPrimaryKey("PersonId")
+                .Table("dbo.LoginAudit", "Id").WithPrimaryKey("Id")
                 .Build(),
             """
             {
               "tables": [
                 { "name": "dbo.Person", "columns": [
+                  { "name": "PersonId", "strategy": "keep", "reason": "surrogate key" },
                   { "name": "Email", "strategy": "scramble" },
                   { "name": "Notes", "strategy": "static", "value": "[redacted]" }
                 ]},
@@ -179,8 +213,8 @@ public class ReportCommandTests : IDisposable
             }
             """);
 
-        Assert.Contains("TRUNCATE  dbo.LoginAudit", result.Output);
-        Assert.Contains("MASK      dbo.Person  (2 of 2 columns)", result.Output);
+        Assert.Contains("DELETE FROM [dbo].[LoginAudit];", result.Output);
+        Assert.Contains("dbo.Person  (2 column(s), row by row, batched on the primary key)", result.Output);
         Assert.Contains("scramble  letters->x", result.Output);
     }
 

@@ -44,6 +44,12 @@ dbscrub status --server localhost --database AAVSB
   unstamped) · `3` unclassified columns while `--fail-on-unclassified` ·
   `4` safety checks refused · `5` config invalid · `1` anything else.
 
+**Built so far (step 4).** `clean` runs the safety checks, the hygiene pass and
+the mask engine, and supports `--yes`, `--dry-run` and `--fail-on-unclassified`.
+It does NOT verify, stamp, rename, or repair users — those are step 5, and a
+stamp is only ever written after a clean verify pass. `--rename-to`/`--replace`
+are therefore not wired yet; see DECISIONS.md D22.
+
 ## 3. Safety checks (build this first)
 
 1. **Server allowlist.** Config `defaults.allowedServers` (default
@@ -110,26 +116,49 @@ System schemas (`sys`, `cdc`, `INFORMATION_SCHEMA`) and the tool's own
 - Set database `RECOVERY SIMPLE` if not already (restore point: this is a
   disposable local copy by definition).
 
-### 5.2 Hygiene (PII copies hide here — do these BEFORE masking)
+### 5.2 Hygiene (PII copies hide here — these SURROUND masking)
+The pass runs in two phases, with 5.3 in between. Re-enabling versioning
+adjacent to disabling it would put masking back inside the window it exists to
+close.
+
+**Before masking:**
 1. **CDC:** if `sys.databases.is_cdc_enabled`, run `EXEC sys.sp_cdc_disable_db`
    (drops all capture tables/jobs).
 2. **Temporal tables:** for each table with `temporal_type = 2`:
    `ALTER TABLE ... SET (SYSTEM_VERSIONING = OFF)`; if `history: "truncate"`
-   (default) truncate the history table; if `"mask"` apply the same column
-   strategies to the history table; re-enable versioning with the original
-   history table name and retention. NOTE: masking a temporal table without
-   this dance COPIES the unmasked row into history — that is the bug this
-   section exists to prevent.
+   (default) truncate the history table; if `"mask"` leave its rows in place for
+   5.3 to rewrite. NOTE: masking a temporal table without this dance COPIES the
+   unmasked row into history — that is the bug this section exists to prevent.
 3. **Configured truncates:** run table-level `truncate` strategies
    (use DELETE when FKs prevent TRUNCATE; disable/re-enable FKs as needed).
 
+**After masking:** re-enable versioning on every table it was disabled on, with
+the original history table name, `DATA_CONSISTENCY_CHECK = OFF`. This runs even
+when masking fails or is cancelled — a table left detached silently records no
+history from then on, and nothing about the database looks wrong.
+
 ### 5.3 Mask
-- Per table: batched updates keyed on the primary key, `batchSize` rows per
-  transaction, ordered PK ranges (no OFFSET). Read batch -> transform in
-  memory -> single UPDATE ... FROM @tvp per batch.
-- Tables without a PK: fall back to a single set-based UPDATE per column
-  (scramble/static/null are all expressible in T-SQL); log a warning.
-- Progress output per table (rows done / total).
+Three modes, chosen per table by whether any replacement depends on the row's
+current value, and whether the table has a primary key (DECISIONS.md D19):
+
+- **Row by row** — any `scramble` column. `SELECT TOP (n)` in key order past the
+  last key seen (a keyset seek, never OFFSET), transform in memory, write the
+  batch back as per-row `UPDATE ... WHERE <key> = @k` statements in one command
+  and one transaction. Rows per command are capped by SQL Server's 2100-parameter
+  limit, so `batchSize` is an upper bound rather than the answer.
+- **Batched constant** — only `null`/`static` columns, table has a key. One
+  set-based UPDATE per key range; no rows are read. The walk exists only to
+  bound each transaction.
+- **Whole table** — only `null`/`static` columns, no key. One UPDATE, one
+  transaction, reported in the plan because it is unbounded.
+
+`scramble` on a table with no primary key is REFUSED at plan time, not
+approximated (DECISIONS.md D19). A primary key column is never masked
+(DECISIONS.md D20).
+
+Every table's rewritten row count is reconciled against a count taken
+immediately before its walk; a mismatch fails the run (DECISIONS.md D21).
+Progress output per table (rows done / total).
 
 ### 5.4 Verify (gate — nothing below runs if this fails)
 - Regex/LIKE sweeps across ALL string columns (not just masked ones):

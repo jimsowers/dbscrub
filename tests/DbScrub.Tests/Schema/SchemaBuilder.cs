@@ -31,6 +31,41 @@ internal sealed class SchemaBuilder
     public SchemaBuilder Table(string qualifiedName, params SchemaColumn[] columns)
         => AddTable(qualifiedName, TemporalType.None, isTrackedByCdc: false, historyName: null, columns);
 
+    /// <summary>
+    /// Gives the table added most recently a primary key over the named columns,
+    /// in key order. Separate from Table() so the common case stays a one-liner
+    /// and the tests that care about keys say so out loud.
+    /// </summary>
+    public SchemaBuilder WithPrimaryKey(params string[] keyColumns)
+    {
+        if (_tables.Count == 0)
+        {
+            throw new InvalidOperationException("Add a table before giving it a primary key.");
+        }
+
+        _tables[^1] = _tables[^1] with { PrimaryKey = keyColumns };
+        return this;
+    }
+
+    /// <summary>
+    /// Gives a NAMED table a primary key. Needed after TemporalTable(), which
+    /// adds two tables — the parent and its history — so "the last one" is the
+    /// history table, which in a real database never has a primary key anyway.
+    /// </summary>
+    public SchemaBuilder WithPrimaryKeyOn(string qualifiedName, params string[] keyColumns)
+    {
+        var index = _tables.FindIndex(t =>
+            string.Equals(t.QualifiedName, qualifiedName, StringComparison.OrdinalIgnoreCase));
+
+        if (index < 0)
+        {
+            throw new InvalidOperationException($"No table named {qualifiedName} has been added.");
+        }
+
+        _tables[index] = _tables[index] with { PrimaryKey = keyColumns };
+        return this;
+    }
+
     /// <summary>Adds a system-versioned temporal table plus its history table.</summary>
     public SchemaBuilder TemporalTable(string qualifiedName, string historyQualifiedName, params string[] columnNames)
     {

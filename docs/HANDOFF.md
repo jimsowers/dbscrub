@@ -1,8 +1,13 @@
-# Handoff — end of step 3
+# Handoff — end of step 4
 
-Last updated 2026-08-02. Steps 1, 2 (mostly), and 3 are done. The tool can
-READ a database and tell you exactly what it would change, and it can now
-GENERATE every destructive statement — but **nothing has ever executed one**.
+Last updated 2026-08-02. Steps 1–4 are done. `clean` exists and can modify a
+database: it runs both safety checks, the hygiene pass, and the mask engine.
+
+**It does not stamp.** The verify gate that earns a stamp is step 5, and
+CLAUDE.md allows a stamp only after a clean verify pass (DECISIONS.md D22). So a
+successful `clean` exits 0, says plainly that the database is NOT stamped, and
+`dbscrub status` keeps answering "not sanitized". That is correct, not unfinished
+business to paper over.
 
 ## The local environment
 
@@ -12,134 +17,157 @@ GENERATE every destructive statement — but **nothing has ever executed one**.
 - `sqlcmd` 16.0 on PATH.
 - .NET SDK 9 and 10; **no .NET 8 SDK**. The 8.0.28 runtime is present, so
   net8.0 output runs. A test asserts the target framework.
-- Fixture database `DbScrubTest` exists. Rebuild it any time with
-  `sqlcmd -S "localhost\MSSQLSERVER02" -E -i scripts\create-test-db.sql` —
-  it drops and recreates, so it is the way back to a known state once
-  destructive testing starts.
+- Fixture database `DbScrubTest`. **The fixture script changed in step 4** — it
+  now creates a fifth table, the heap `dbo.ContactImport`. Rebuild before doing
+  anything else:
+  `sqlcmd -S "localhost\MSSQLSERVER02" -E -i scripts\create-test-db.sql`
+  It drops and recreates, so it is also the way back to a known state after a
+  destructive run.
 
 ## What works
 
 | Command | State |
 |---|---|
-| `dbscrub report` | Done. Read-only. Prints schema facts, the exact hygiene SQL, the mask plan, the summary, exclusions, and the UNCLASSIFIED list in paste-into-config form. |
-| `dbscrub status` | Done. Exit 0 stamped, 2 unstamped, 4 refused. |
-| `dbscrub clean` | **Does not exist.** Nothing can modify a database. |
+| `dbscrub report` | Read-only. Prints the three phases in execution order, the mask plan with each table's mode, the summary, exclusions, and the UNCLASSIFIED list in paste-into-config form. |
+| `dbscrub status` | Exit 0 stamped, 2 unstamped, 4 refused. The stamped path is still unit-tested only — nothing writes a stamp yet. |
+| `dbscrub clean` | Safety checks, hygiene, mask. `--yes`, `--dry-run`, `--fail-on-unclassified`. No verify, no stamp, no rename, no user repair. |
 
-218 unit tests, 0 warnings (warnings are errors).
+323 unit tests, 0 warnings (warnings are errors).
 
 ## Verified against the live database
 
-- `SchemaInventory` — correct on first execution against SQL Server 2025.
-  Cross-checked against `sys.tables`/`sys.columns`.
-- The server allowlist, both directions: same server and database, two configs,
-  and only the config naming `localhost\MSSQLSERVER02` was allowed to connect.
-- `status` — refused without a config (exit 4); "NOT SANITIZED" with one
-  (exit 2).
-- Table-level `keep` — excluding `app.Enrollment` dropped UNCLASSIFIED from 6
-  to 3 and listed the table with its reason.
-- `report` prints all 5 hygiene statements for `DbScrubTest` with correct
-  bracketing, including the non-`dbo` schema case.
+- `SchemaInventory`'s new primary-key query — correct on first execution against
+  SQL Server 2025. `report` resolves `dbo.Person` to "row by row, batched on the
+  primary key", which only happens if `PersonId` was read in key order.
+- `report` prints all five pre-mask statements and the single post-mask reattach,
+  in the right places relative to the Mask section.
+- The stale-entry check: pointing the updated config at the not-yet-rebuilt
+  fixture correctly refused with DBS005 and exit 5.
 
-## NOT verified
+## NOT verified — read this before trusting anything below
 
-- **No hygiene statement has ever run.** `HygienePlanner` builds them; nothing
-  calls the output. The SYSTEM_VERSIONING dance in particular is unproven
-  against a real temporal table.
-- **The `SANITIZED` path of `status`** is unit-tested only, because nothing can
-  write a stamp yet.
+- **`clean` has never run.** Not once, not with `--dry-run`. Every statement it
+  would send is unit-tested as a string, and the ordering is unit-tested against
+  a recording double, but nothing has been executed by SQL Server. The next
+  session's first job is the sequence in "First run" below, and the first
+  destructive run is Jim's to approve (CLAUDE.md).
+- The batch LOOPS in `SqlCleanSession` (keyset walk, transaction per batch,
+  parameter binding) are the part unit tests cannot reach. The row-count
+  reconciliation (D21) is the designed backstop: if the walk skips rows, the run
+  fails loudly instead of reporting success.
+- `history: "mask"` is implemented and unit-tested but has no fixture. The
+  fixture uses the default, `truncate`.
 
-## Bugs the live database found (both fixed)
+## First run — the sequence to use
 
-1. **`GENERATED ALWAYS` columns looked writable.** `sys.columns` reports
-   temporal period columns with `is_computed = 0` AND `is_identity = 0`, so the
-   original `IsWritable` classified `ValidFrom` as an ordinary `datetime2`. A
-   config could have asked to scramble it, passed validation, and failed inside
-   the mask engine mid-run. Fixed by reading `generated_always_type`.
-2. **Combining accents survived scrambling.** In the decomposed encoding, the
-   accent on "é" is a Unicode MARK, not a letter, so `char.IsLetter` missed it —
-   leaking that a name was accented. Found by a test.
+Rebuild the fixture first, then:
 
-The method point behind both: a unit-test double built from the same mental
-model as the code shares its blind spots. The first needed a real server; the
-second needed a test written to be awkward.
+```
+src\DbScrub.Cli\bin\Debug\net8.0\dbscrub.exe clean --server "localhost\MSSQLSERVER02" --database DbScrubTest --config config\dbscrubtest.masking.json --dry-run
+```
 
-## Start here: what step 4 needs first
+Then drop `--dry-run` and type `DbScrubTest` at the prompt. Afterwards, check by
+hand — the fixture's seed data is shaped to match the step 5 verify patterns on
+purpose, so the interesting queries are:
 
-**`SchemaInventory` does not read primary keys.** The mask engine batches
-updates on ordered PK ranges (SPEC 5.3), so this is the first concrete task and
-it is easy to miss because everything else about the inventory is finished.
-Add it to the existing `SchemaInventory` — CLAUDE.md requires all `sys.*`
-access to live in that one class.
+- `SELECT * FROM dbo.Person` — FirstName all `Dev`, Email all
+  `dev@example.invalid`, Ssn `999-99-9999`, Phone `999-999-9999`, LastName all
+  x/X. `Notes` is UNCLASSIFIED, so it should still hold its original text — that
+  is the warn-mode gap made visible, not a bug.
+- `SELECT COUNT(*) FROM dbo.PersonHistory` — 0, and **not** 4. A non-zero count
+  means the versioning dance failed and masking refilled history: the exact bug
+  the pre/post split exists to prevent.
+- `SELECT COUNT(*) FROM dbo.LoginAudit` — 0.
+- `SELECT * FROM dbo.ContactImport` — the keyless path. Email replaced, Phone
+  NULL, Notes `[redacted]`, and still **four** rows: two of them are identical
+  by design, because a heap has nothing to tell them apart.
+- `SELECT is_cdc_enabled FROM sys.databases WHERE name = 'DbScrubTest'` — 0.
+- `SELECT temporal_type_desc FROM sys.tables WHERE name = 'Person'` —
+  `SYSTEM_VERSIONED_TEMPORAL_TABLE`. Anything else means versioning was left off.
 
-Tables with no PK fall back to a single set-based UPDATE per column with a
-warning (SPEC 5.3). `DbScrubTest` has a PK on every table, so that fallback has
-no fixture — worth adding one.
+After that first run, testing `clean` freely against `DbScrubTest` is fine.
 
-## Traps waiting in steps 4 and 5
+## What step 5 needs
 
-1. **Masking runs with SYSTEM_VERSIONING OFF and reattaches only at the end.**
-   The hygiene pass detaches and reattaches as three adjacent steps today,
-   which is correct for emptying history but WRONG once masking sits between
-   them. `clean` must interleave: detach all -> hygiene -> mask -> reattach all.
-   `HygienePlanner` will need splitting, and its ordering test rewritten to
-   assert the interleaved sequence.
+The verify gate (SPEC 5.4), then stamp and rename (5.5), then user repair (5.6).
 
-2. **Verify must ignore all-placeholder values** (D17), or a correctly scrubbed
-   database can never be stamped. `Scrambler.LooksScrambled` exists for this and
-   has a property test proving every scrambler output satisfies it.
+1. **Verify must ignore all-placeholder values** or a correctly scrubbed database
+   can never be stamped (DECISIONS.md D17). `Scrambler.LooksScrambled` exists for
+   exactly this and has a property test proving every scrambler output satisfies
+   it. `999-99-9999` matches the SSN pattern; that is not a bug in either piece.
+2. **The stamp is the whole clean/dirty signal** since D10 removed the naming
+   distinction. Writing one without the verify pass that earns it makes `status`
+   — and later the read-only Guard — confidently wrong.
+3. **`--rename-to` and `--replace` are not wired.** Deliberately: SPEC 5.5
+   renames only after a clean verify pass. Add the options in the same step that
+   makes them legal.
+4. **`CleanCommand.Confirm` passes `renameTo: null`** to the confirmation
+   summary. `TypedConfirmation.BuildSummary` already handles a rename target;
+   wire it when rename ships, or the operator confirms a run without seeing the
+   rename in the summary.
+5. **The order after masking is fixed by CLAUDE.md**: verify → stamp → rename.
+   `CleanRunner` returns a `CleanOutcome`; verify slots in after it and before
+   anything writes a stamp.
 
-3. **Static values need type-checking against the column** (SPEC section 4),
-   still not implemented. Deferred on purpose — the mask engine is where the
-   actual T-SQL conversion happens.
+## Design decisions made in step 4
 
-4. **`--yes` is required for any non-interactive run.** It now works on named
-   local instances (D18). Without it `clean` prompts, which no shell-driven
-   test can satisfy.
+All in `docs/DECISIONS.md` with the rejected alternatives:
+
+- **D19** — no table-valued parameter (it would need DDL in the target database);
+  per-row parameterized UPDATEs bounded by SQL Server's 2100-parameter limit;
+  constant strategies never read a row; `scramble` on a keyless table is REFUSED
+  rather than approximated with `TRANSLATE`, which silently leaks non-ASCII
+  letters.
+- **D20** — a primary key column is never masked. It breaks the walk, collides,
+  and orphans references.
+- **D21** — every table's row count is reconciled before and after. A skipped row
+  is otherwise silent, and silence here means unmasked PII.
+- **D22** — `clean` ships before verify and says so rather than stamping.
+
+## Bugs step 4 found in earlier steps (both fixed)
+
+1. **`history: "mask"` truncated instead of masking.** `HygienePlanner` emptied
+   temporal history unconditionally, because `TablePlan` never carried the
+   config's history mode. The keyword read as intent and did the opposite.
+2. **Static integer narrowing silently did not happen.** A switch expression with
+   `byte`/`short`/`int`/`long` arms has no common type, so C# unified them to
+   `long` and every arm was widened back before boxing. Caught by a test that
+   asserted the CLR type rather than the value; the `(object)` casts in
+   `StaticValue` are load-bearing.
+
+The method point behind both: the second one was invisible to any test that
+compared values, and only showed up because the test asserted the type. The
+first was invisible to every test because nothing exercised that keyword at all.
 
 ## Standing rules that bite here
 
 - **NEVER push to `main`.** Feature branch and PR, always. "Push it" means open
   a PR.
 - **The first destructive run against a database is Jim's to approve**, even
-  though `.claude/settings.local.json` now permits the `dbscrub` binary against
+  though `.claude/settings.local.json` permits the `dbscrub` binary against
   `DbScrubTest`. That permission is for repeat testing after the first run, and
   covers only that database — not `sqlcmd`, not any other database.
 - **Never print PII values**, including in tests. Fixture data uses reserved
   ranges only (`example.invalid`, `555-01xx`, never-issued SSN prefixes) and is
   shaped to match the verify patterns on purpose.
-- Rename and orphaned-user repair are still unbuilt. They were deliberately
-  left out of step 2 because their only caller is `clean`; they ship with it.
-
-## Decisions made since the spec was written
-
-D12 hand-rolled config validation · D13 xunit Assert, no assertion library ·
-D14 the allowlist gates every command · D15 `status` takes an optional
-`--config` · D16 fail-safe stamp reading · D17 verify ignores all-placeholder
-values · D18 `--yes` compares the host portion. All in `docs/DECISIONS.md` with
-the reasoning and the rejected alternatives.
+- Claude never claims the integration tier passed. That tier does not exist yet;
+  when a diff touches SQL generation or execution, name the suite Jim should run.
 
 ## Starter prompt for the next session
 
 > Read CLAUDE.md, docs/SPEC.md, docs/DECISIONS.md, and docs/HANDOFF.md in full
 > before writing any code.
 >
-> Steps 1-3 are done and merged. The tool reads a database, reports exactly what
-> it would change, and generates every destructive statement — but nothing has
-> executed one yet. 218 tests pass.
+> Steps 1–4 are done. `clean` runs the safety checks, the hygiene pass and the
+> mask engine against a real database, but it deliberately does not verify,
+> stamp, or rename. 323 tests pass.
 >
-> This session is step 4: the mask engine, and the `clean` command that ties it
-> together with the hygiene pass and the two safety checks.
+> This session is step 5: the verify gate, then stamp and rename, then orphaned
+> user repair — in that order, because a stamp is only ever written after a clean
+> verify pass.
 >
-> Start by adding primary-key reading to SchemaInventory — the mask engine
-> batches on ordered PK ranges and the inventory does not read them yet. Then
-> build the batched UPDATE generation for the four strategies, then wire
-> `clean`.
->
-> Read "Traps waiting in steps 4 and 5" in HANDOFF.md first: the hygiene pass
-> currently detaches and reattaches temporal versioning as three adjacent steps,
-> which becomes wrong once masking sits between them.
->
-> Do NOT run `clean` against DbScrubTest until I approve the first run. After
-> that first run, testing it freely is fine.
+> Read "What step 5 needs" in HANDOFF.md first, especially the point about verify
+> ignoring all-placeholder values (DECISIONS.md D17) — without it a correctly
+> scrubbed database can never be stamped.
 >
 > Work on a feature branch. Never push to main.
