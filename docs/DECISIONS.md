@@ -47,8 +47,11 @@ the run instead of leaking.
 ## D7 — In-place cleaning is an accepted compromise for this tier
 MDF/log still contain pre-images after masking (log before-images, ghost
 records). Threat model here is accidental sharing of query results, not disk
-forensics. Mitigation: SIMPLE recovery + checkpoint + log shrink. Real fix is
-the v1 quarantine pipeline.
+forensics. Real fix is the v1 quarantine pipeline.
+
+(This decision originally listed "SIMPLE recovery + checkpoint + log shrink" as
+a mitigation. The checkpoint and shrink were removed in D24 — they mitigate
+nothing. SIMPLE recovery stays, but for log SIZE, not for safety.)
 
 ## D8 — The app-expected name is reserved for sanitized copies (local flow superseded by D10; pattern retained for v1 pipeline)
 Constraint discovered: a consuming solution's web.config points at
@@ -461,6 +464,53 @@ The one piece pulled FORWARD into step 5: reading unique indexes in
 `SchemaInventory`, because it is a few lines beside the primary-key query and it
 converts a mid-run failure into a plan-time refusal whether or not the rest of
 this ships.
+
+## D24 — No CHECKPOINT, no log shrink. They mitigate nothing and imply a cleanup
+
+SPEC 5.5 called for a `CHECKPOINT` and a transaction-log shrink after stamping,
+listed in D7 as part of the mitigation for cleaning in place. Removed before it
+was ever built.
+
+**Neither statement erases anything.** Under SIMPLE recovery a `CHECKPOINT`
+marks the inactive portion of the log reusable; it does not overwrite it. The
+old values remain on disk until something else happens to write over them.
+`SHRINKFILE` returns space to the filesystem, where those bytes typically
+survive as unallocated disk. Together they reduce how much sits inside the file
+without reliably removing any of it.
+
+**SQL Server already does the checkpoint part.** Automatic checkpoints fire on
+their own under SIMPLE recovery. An explicit one makes truncation happen now
+rather than in a few minutes. That is the entire difference.
+
+**It misses the larger source anyway.** Masking UPDATEs leave old row versions
+as ghost records in the DATA file until the background cleanup task reaches
+them. Neither statement touches those, and SPEC 5.5 conceded as much in its own
+parenthesis while still calling for the statements.
+
+**And the threat model rules it out.** D7 states it plainly: "accidental sharing
+of query results, not disk forensics." Reading pre-images out of a transaction
+log takes `fn_dblog()` or a log reader, deliberately. Nobody accidentally pastes
+a transaction log into an email. So this defended against the threat D7
+explicitly excludes while doing nothing about the one it includes.
+
+The decisive argument is not that it is useless but that it is MISLEADING. A
+spec line reading "CHECKPOINT + shrink the log file" implies the log gets
+cleaned. It does not. Someone could reasonably read it and believe the copy is
+protected against something it is not, and false confidence in a PII tool is
+worse than a gap that is written down. Replacing a ritual with an accurate
+sentence is a net gain in safety.
+
+SIMPLE recovery is KEPT, for a different and honest reason: it bounds how large
+the log grows during a run, which is what makes batching worth doing. That is a
+size argument, not a safety one, and the hygiene step says so.
+
+The one real cost of removal — a dev log file that stays large — is the
+operator's disk to manage. Batching already bounds the growth, shrinking a log
+as routine maintenance is poor practice because it simply regrows, and making a
+successful `clean` slower for it is a bad trade.
+
+Revisit only if the threat model changes. If disk forensics ever comes in
+scope, the answer is the v1 quarantine pipeline, not these two statements.
 
 ## Roadmap
 
