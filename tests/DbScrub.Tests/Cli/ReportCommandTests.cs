@@ -150,8 +150,13 @@ public class ReportCommandTests : IDisposable
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """);
 
-        Assert.Contains("sys.sp_cdc_disable_db", result.Output);
-        Assert.Contains("SYSTEM_VERSIONING OFF -> handle dbo.PersonHistory -> ON", result.Output);
+        // The report shows the statements that will actually run, not a
+        // paraphrase — a report you cannot check against reality is not a
+        // safeguard.
+        Assert.Contains("EXEC sys.sp_cdc_disable_db;", result.Output);
+        Assert.Contains("ALTER TABLE [dbo].[Person] SET (SYSTEM_VERSIONING = OFF);", result.Output);
+        Assert.Contains("TRUNCATE TABLE [dbo].[PersonHistory];", result.Output);
+        Assert.Contains("SYSTEM_VERSIONING = ON", result.Output);
     }
 
     [Fact]

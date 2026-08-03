@@ -201,6 +201,60 @@ The dangerous error is calling a dirty database clean; the reverse costs a
 re-run. An unparseable `SanitizedUtc` leaves the database sanitized with an
 unknown date, because the flag is the load-bearing part.
 
+## D17 — Verify ignores all-placeholder values, rather than changing scramble
+Conflict found while building the mask engine: the sample config scrambles
+`Ssn`, scramble turns `123-45-6789` into `999-99-9999`, and the verify gate
+(SPEC 5.4) sweeps every string column for `###-##-####`. `999-99-9999` matches
+it. As specified, a correctly-scrubbed database could never pass verify and so
+could never be stamped.
+
+This is inherent, not a bug in either piece: scramble preserves shape ON PURPOSE
+so forms still validate and column widths still hold, and shape is exactly what
+a pattern detector looks for.
+
+Options considered:
+1. Stop preserving shape in scramble — rejected, it is the whole reason
+   scramble exists rather than writing "REDACTED" everywhere.
+2. Have verify skip columns that were masked — rejected, SPEC 5.4 deliberately
+   sweeps ALL string columns, because the columns nobody configured are the
+   ones most likely to leak.
+3. Have verify ignore values composed entirely of scramble output. CHOSEN.
+
+A real SSN cannot be all nines; scrambler output always is. `Scrambler.
+LooksScrambled` is deliberately conservative — a value must contain no letter
+other than x/X and no digit other than 9, and must have had something actually
+replaced, so punctuation alone ("---") does not qualify. A real value that
+merely contains a 9 is never mistaken for masked output.
+
+Consequence for config authors: `scramble` keeps a value's shape, so a
+scrambled email still looks like an email to anything shape-based. Where the
+shape itself is the sensitive part, `static` is the better strategy. The sample
+config already uses `static` for `Email` for this reason.
+
+## D18 — `--yes` compares the HOST portion, not the whole server string
+SPEC 3.2 permits `--yes` to skip typed confirmation "only when the server
+matched `localhost`/`.`/`127.0.0.1` literally". Implemented literally, that
+banned every named instance — including `localhost\MSSQLSERVER02`, the only
+instance on the dev machine. Consequences: `clean` became interactive-only
+there, which breaks the restore-then-scrub wrapper (D10), any MSBuild or CI
+step, and automated testing of `clean` itself.
+
+The spec listed strings where the intent was a property: "is this
+unambiguously my own machine?" A named instance is resolved by the SQL Browser
+on the same host, so `localhost\ANYTHING` is exactly as local as `localhost`.
+
+Resolution: split on the instance separator and match the host portion exactly
+against `localhost`, `.`, `127.0.0.1`. Still an exact match, still never a
+prefix — `localhost.corp.example`, `notlocalhost`, `10.0.0.5\SQL2022`, and
+`prod-sql-01\localhost` are all refused. `--yes` remains NARROWER than the
+allowlist: `(local)` is allowlisted by default and still cannot use `--yes`.
+
+This widens what `--yes` accepts, so it deserves the scrutiny a safety change
+gets. What it does NOT change: the allowlist itself (unchanged, exact, no
+override flag) and the typed confirmation for every interactive run. `--yes`
+was always an escape hatch for scripted local use; this makes the escape hatch
+work on the machines that actually exist.
+
 ## Roadmap
 
 - **v0** (this repo, now): spec in SPEC.md.

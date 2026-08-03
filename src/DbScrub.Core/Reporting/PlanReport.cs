@@ -1,5 +1,6 @@
 using System.Text;
 using DbScrub.Core.Configuration;
+using DbScrub.Core.Hygiene;
 using DbScrub.Core.Schema;
 using DbScrub.Core.Verdicts;
 
@@ -65,29 +66,22 @@ public static class PlanReport
     /// </summary>
     private static void AppendHygiene(StringBuilder builder, ScrubPlan plan)
     {
-        var lines = new List<string>();
+        // Built by HygienePlanner rather than described separately here, so the
+        // report shows the statements that will ACTUALLY run. A report that
+        // paraphrases the destructive step is a report you cannot check.
+        var steps = HygienePlanner.Build(plan);
 
-        if (plan.Schema.IsCdcEnabled)
-        {
-            lines.Add($"Disable CDC on {plan.Schema.DatabaseName} (sys.sp_cdc_disable_db) "
-                + "— drops all capture tables and jobs");
-        }
-
-        foreach (var table in plan.Temporal)
-        {
-            var history = table.Table.QualifiedHistoryName ?? "(unknown history table)";
-            lines.Add($"{table.QualifiedName}: SYSTEM_VERSIONING OFF -> handle {history} -> ON");
-        }
-
-        if (lines.Count == 0)
+        if (steps.Count == 0)
         {
             return;
         }
 
-        builder.AppendLine("Hygiene (runs before masking)");
-        foreach (var line in lines)
+        builder.AppendLine($"Hygiene ({steps.Count} statement(s), run before masking)");
+
+        foreach (var step in steps)
         {
-            builder.AppendLine($"  {line}");
+            builder.AppendLine($"  {step.Description}");
+            builder.AppendLine($"      {step.Sql}");
         }
 
         builder.AppendLine();
