@@ -9,10 +9,16 @@ explains why and holds the roadmap. Read both before proposing changes.
 ## How we work
 - Small steps. One step per session, reviewed before the next.
   Step order: (1) config model + validation + schema inventory + `report`
-  command with the diff/UNCLASSIFIED output, (2) safety checks + stamp +
-  `status` command + rename + orphaned-user repair, (3) hygiene steps
-  (CDC/temporal/truncate), (4) mask engine with the four strategies,
-  (5) verify gate, (6) DbScrub.Guard micro-library (netstandard2.0;net8.0, READ-ONLY - see SPEC section 8 and DECISIONS D11). Don't jump ahead. Step 6 is DEFERRED: build it only when the repo owner explicitly asks. Milestone for v0 is the cleaner working MANUALLY (steps 1-5). Make NO changes to aavsb.sln, its web.config, or any consuming application - the aavsb target framework is .NET Framework 4.8, recorded here for when step 6 eventually starts.
+  command with the diff/UNCLASSIFIED output, (2) safety checks + stamp READING
+  + `status` command, (3) hygiene steps (CDC/temporal/truncate), (4) mask
+  engine with the four strategies + `clean` wiring the above together,
+  (5) verify gate + stamp WRITING + rename + orphaned-user repair,
+  (6) DbScrub.Guard micro-library (netstandard2.0;net8.0, READ-ONLY - see SPEC section 8 and DECISIONS D11). Don't jump ahead. Step 6 is DEFERRED: build it only when the repo owner explicitly asks. Milestone for v0 is the cleaner working MANUALLY (steps 1-5). Make NO changes to aavsb.sln, its web.config, or any consuming application - the aavsb target framework is .NET Framework 4.8, recorded here for when step 6 eventually starts.
+  Rename and orphaned-user repair moved from step 2 to step 5 during step 2
+  itself: their only caller is `clean`, and a rename may only happen after a
+  clean verify pass, so they cannot ship before the gate that authorizes them.
+  Likewise the stamp splits across two steps — step 2 reads it (to refuse an
+  already-clean database), step 5 writes it (once verify has earned it).
 - Teach while building: the repo owner wants to understand every line.
   Prefer boring, readable code over clever code. Explain SQL Server behaviors
   (temporal versioning dance, TRUNCATE vs DELETE + FKs, SINGLE_USER rename)
