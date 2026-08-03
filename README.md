@@ -10,15 +10,25 @@ AI tool — never touches real people's information.
 steps, and how the code works, with class names. Everything a new developer
 needs, on one page.
 
-GitHub shows the source of `.html` files rather than rendering them, so open it
-one of these ways:
+**Read it here:** https://jimsowers.github.io/dbscrub/
 
-- **Locally** — clone the repo and open the file in a browser. It is fully
-  self-contained: no network, no build step, works offline.
-- **Hosted** — enable GitHub Pages for this repo (Settings → Pages → deploy from
-  `main`, folder `/docs`) and it is live at
-  `https://jimsowers.github.io/dbscrub/getting-started.html`, ready to link from
-  a wiki or paste into chat.
+Or clone the repo and open `docs/getting-started.html` in a browser — it is
+fully self-contained, so it works offline with no build step. (GitHub shows the
+*source* of `.html` files rather than rendering them, which is why the hosted
+link above exists.)
+
+<details>
+<summary>Turning the hosted link on, if it is not live yet</summary>
+
+Settings → Pages → **Source: Deploy from a branch** → branch `main`, folder
+`/docs` → Save. It takes a minute or two to publish, then the URL above serves
+the guide.
+
+Everything else is already in place: `docs/index.html` redirects the root URL to
+the guide, and `docs/.nojekyll` stops GitHub trying to run the folder through
+Jekyll, which would otherwise treat `SPEC.md` and friends as blog posts.
+
+</details>
 
 ---
 
