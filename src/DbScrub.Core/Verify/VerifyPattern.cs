@@ -19,9 +19,10 @@ public sealed class VerifyPattern
 {
     private readonly Regex _regex;
 
-    private VerifyPattern(string name, string description, string likePattern, string regex)
+    private VerifyPattern(string name, string label, string description, string likePattern, string regex)
     {
         Name = name;
+        Label = label;
         Description = description;
         LikePattern = likePattern;
 
@@ -31,10 +32,21 @@ public sealed class VerifyPattern
         _regex = new Regex(regex, RegexOptions.Compiled | RegexOptions.CultureInvariant);
     }
 
-    /// <summary>Short name, used in the failure report. Never contains a value.</summary>
+    /// <summary>
+    /// The stable identifier — lower-case, hyphenated, safe to grep for and safe
+    /// to depend on. Used in code and tests, NOT in output.
+    /// </summary>
     public string Name { get; }
 
-    /// <summary>What a human should picture when they see the name in a report.</summary>
+    /// <summary>
+    /// What the operator reads. `ssn` is an internal name; "Social Security
+    /// number" is what a person who has never seen this tool understands, and
+    /// nobody should have to look up a label printed by the thing they are
+    /// currently running.
+    /// </summary>
+    public string Label { get; }
+
+    /// <summary>The shape itself, e.g. ###-##-####, shown beside the label.</summary>
     public string Description { get; }
 
     /// <summary>The server-side pre-filter. See the class comment for why it is separate.</summary>
@@ -52,26 +64,34 @@ public sealed class VerifyPattern
     /// </summary>
     public static IReadOnlyList<VerifyPattern> All { get; } =
     [
-        new("email", "name@host.tld",
+        new("email", "email address", "name@example.com",
             // Deliberately loose: _ is LIKE's single-character wildcard, so this
             // reads "something, @, something, dot, something".
             likePattern: "%_@_%_._%",
             regex: @"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"),
 
-        new("ssn", "###-##-####",
+        new("ssn", "Social Security number", "###-##-####",
             likePattern: "%[0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9]%",
             regex: @"\d{3}-\d{2}-\d{4}"),
 
-        new("phone-dashed", "###-###-####",
+        new("phone-dashed", "phone number", "###-###-####",
             likePattern: "%[0-9][0-9][0-9]-[0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]%",
             regex: @"\d{3}-\d{3}-\d{4}"),
 
-        new("phone-parens", "(###) ###-####",
+        new("phone-parens", "phone number", "(###) ###-####",
             likePattern: "%([0-9][0-9][0-9]) [0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]%",
             regex: @"\(\d{3}\)\s*\d{3}-\d{4}"),
 
-        new("phone-dotted", "###.###.####",
+        new("phone-dotted", "phone number", "###.###.####",
             likePattern: "%[0-9][0-9][0-9].[0-9][0-9][0-9].[0-9][0-9][0-9][0-9]%",
             regex: @"\d{3}\.\d{3}\.\d{4}"),
     ];
+
+    /// <summary>The operator-facing name for a pattern id, e.g. `ssn` -> "Social Security number".</summary>
+    public static string LabelFor(string name) =>
+        All.FirstOrDefault(p => p.Name == name)?.Label ?? name;
+
+    /// <summary>The shape for a pattern id, e.g. `ssn` -> "###-##-####".</summary>
+    public static string DescriptionFor(string name) =>
+        All.FirstOrDefault(p => p.Name == name)?.Description ?? string.Empty;
 }

@@ -4,8 +4,8 @@ using DbScrub.Core.Verdicts;
 namespace DbScrub.Core.Reporting;
 
 /// <summary>
-/// Renders UNCLASSIFIED columns as JSON the user can paste straight into their
-/// config (SPEC section 6).
+/// Renders the columns with no rule as JSON the user can paste straight into
+/// their config (SPEC section 6).
 ///
 /// The important detail is that there are TWO shapes, not one. A table already
 /// in the config needs only its missing columns — pasting a whole table entry
@@ -21,7 +21,7 @@ public static class UnclassifiedFormatter
     /// alternative is a strategy that rewrites data nobody has looked at yet —
     /// but it must not read as a considered decision, hence TODO.
     /// </summary>
-    public const string PlaceholderReason = "TODO: classify";
+    public const string PlaceholderReason = "TODO: decide what to do with this";
 
     public static string Format(ScrubPlan plan)
     {

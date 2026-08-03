@@ -247,8 +247,10 @@ public class CleanCommandTests : IDisposable
                 [new VerifyHit("dbo", "Person", "Notes", "ssn", 2)], ColumnsScanned: 2, RowsInspected: 2));
 
         Assert.Contains("dbo.Person.Notes", result.Error);
-        Assert.Contains("ssn", result.Error);
-        Assert.Contains("2 value(s)", result.Error);
+        // The operator-facing label, never the internal pattern id.
+        Assert.Contains("Social Security number", result.Error);
+        Assert.DoesNotContain("ssn", result.Error);
+        Assert.Contains("2 × Social Security number (###-##-####)", result.Error);
     }
 
     [Fact]

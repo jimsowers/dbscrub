@@ -55,20 +55,28 @@ public static class TypedConfirmation
         builder.AppendLine($"  Database          {plan.Schema.DatabaseName}");
         builder.AppendLine();
 
+        builder.AppendLine($"  Tables emptied      {plan.Truncated.Count()}");
+        builder.AppendLine($"  Tables masked       {plan.Masked.Count()}");
+        builder.AppendLine($"  Columns masked      {plan.ColumnsToMask}");
+
+        // These two are the consequences a reader is least likely to predict,
+        // because both are SQL Server features doing something invisible. They
+        // are spelled out rather than named — this is the last screen before
+        // someone types a database name and loses the ability to undo.
         if (plan.Schema.IsCdcEnabled)
         {
-            builder.AppendLine("  Change tracking   WILL BE DISABLED (drops all capture tables)");
+            builder.AppendLine();
+            builder.AppendLine("  Change Data Capture will be TURNED OFF. SQL Server has been keeping");
+            builder.AppendLine("  hidden copies of every changed row; turning it off deletes them.");
         }
 
         var temporal = plan.Temporal.Count();
         if (temporal > 0)
         {
-            builder.AppendLine($"  History tables    {temporal} table(s) — history will be emptied");
+            builder.AppendLine();
+            builder.AppendLine($"  {temporal} table(s) keep a hidden history of past rows. Every past");
+            builder.AppendLine("  version will be DELETED — they hold the original, unmasked values.");
         }
-
-        builder.AppendLine($"  Tables emptied    {plan.Truncated.Count()}");
-        builder.AppendLine($"  Tables masked     {plan.Masked.Count()}");
-        builder.AppendLine($"  Columns masked    {plan.ColumnsToMask}");
 
         if (plan.Unclassified.Count > 0)
         {

@@ -21,7 +21,7 @@ public class HygienePlannerTests
     }
 
     [Fact]
-    public void ChangeTrackingIsDisabledFirst()
+    public void ChangeDataCaptureIsDisabledFirst()
     {
         // Its capture tables hold full copies of changed rows. Masking before
         // disabling would just add the masked versions alongside the originals.
@@ -32,7 +32,7 @@ public class HygienePlannerTests
                 { "name": "Email", "strategy": "scramble" } ]} ] }
             """));
 
-        Assert.Equal(HygieneStepKind.DisableChangeTracking, steps[0].Kind);
+        Assert.Equal(HygieneStepKind.DisableChangeDataCapture, steps[0].Kind);
         Assert.Equal("EXEC sys.sp_cdc_disable_db;", steps[0].Sql);
     }
 
@@ -173,7 +173,7 @@ public class HygienePlannerTests
     }
 
     [Fact]
-    public void TruncationsComeAfterChangeTrackingIsOff()
+    public void TruncationsComeAfterChangeDataCaptureIsOff()
     {
         var schema = SchemaBuilder.Database()
             .WithCdcEnabled()
@@ -183,7 +183,7 @@ public class HygienePlannerTests
         var steps = PreMask(Plan(schema,
             """{ "tables": [ { "name": "dbo.LoginAudit", "strategy": "truncate" } ] }"""));
 
-        Assert.Equal(HygieneStepKind.DisableChangeTracking, steps[0].Kind);
+        Assert.Equal(HygieneStepKind.DisableChangeDataCapture, steps[0].Kind);
         Assert.Equal(HygieneStepKind.TruncateTable, steps[1].Kind);
     }
 
