@@ -4,9 +4,9 @@ using Microsoft.Data.SqlClient;
 namespace DbScrub.Core.Schema;
 
 /// <summary>
-/// The one place sys.* is queried (CLAUDE.md). Four reads, no ORM:
-/// the database-level CDC flag, the table list, all columns, then all primary
-/// key columns.
+/// The one place sys.* is queried (CLAUDE.md). Five reads, no ORM:
+/// the database-level CDC flag, the table list, all columns, all primary
+/// key columns, then every other uniqueness rule.
 ///
 /// Why separate queries rather than one join: the table list, the column list
 /// and the key list are different grains, and joining them means
@@ -103,6 +103,50 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
         ORDER BY s.name, t.name, ic.key_ordinal;
         """;
 
+    /// <summary>
+    /// Every uniqueness rule EXCEPT the primary key. Deliberately the same query
+    /// shape as the one above, because it reads the same catalog views for the
+    /// same reason — the only differences are the three flags in the WHERE
+    /// clause, and each is worth explaining:
+    ///
+    ///   is_unique = 1        catches UNIQUE constraints and CREATE UNIQUE INDEX
+    ///                        alike; a constraint is a unique index with a flag.
+    ///   is_primary_key = 0   the key has its own read, and a masked key column
+    ///                        is already refused with a better message (D20).
+    ///   is_disabled = 0      a disabled index enforces nothing, so refusing a
+    ///                        strategy on its account would be a refusal with no
+    ///                        failure behind it.
+    ///
+    /// Filtered unique indexes (has_filter = 1) are read like any other. The
+    /// filter is arbitrary SQL this tool does not parse, so it cannot know
+    /// whether the rows it is about to write fall inside it — and a conservative
+    /// refusal costs a config edit, while the other mistake costs a half-masked
+    /// database (DECISIONS.md D27).
+    /// </summary>
+    private const string UniqueIndexesSql = """
+        SELECT  s.name  AS SchemaName,
+                t.name  AS TableName,
+                i.name  AS IndexName,
+                c.name  AS ColumnName
+        FROM sys.indexes AS i
+        INNER JOIN sys.index_columns AS ic ON ic.object_id = i.object_id
+                                          AND ic.index_id  = i.index_id
+        INNER JOIN sys.columns AS c  ON c.object_id = ic.object_id
+                                    AND c.column_id = ic.column_id
+        INNER JOIN sys.tables  AS t  ON t.object_id = i.object_id
+        INNER JOIN sys.schemas AS s  ON s.schema_id = t.schema_id
+        WHERE i.is_unique      = 1
+          AND i.is_primary_key = 0
+          AND i.is_disabled    = 0
+          -- An included column sits in the leaf pages and is NOT part of the
+          -- key, so it takes no part in uniqueness. Treating one as constrained
+          -- would refuse a config that would have worked.
+          AND ic.is_included_column = 0
+          AND t.is_ms_shipped = 0
+          AND s.name NOT IN ('sys', 'cdc', 'INFORMATION_SCHEMA')
+        ORDER BY s.name, t.name, i.name, ic.key_ordinal;
+        """;
+
     public async Task<DatabaseSchema> ReadAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = new SqlConnection(connectionString);
@@ -111,7 +155,9 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
         var (databaseName, isCdcEnabled) = await ReadDatabaseAsync(connection, cancellationToken);
         var columnsByTable = await ReadColumnsAsync(connection, cancellationToken);
         var keysByTable = await ReadPrimaryKeysAsync(connection, cancellationToken);
-        var tables = await ReadTablesAsync(connection, columnsByTable, keysByTable, cancellationToken);
+        var uniqueByTable = await ReadUniqueIndexesAsync(connection, cancellationToken);
+        var tables = await ReadTablesAsync(
+            connection, columnsByTable, keysByTable, uniqueByTable, cancellationToken);
 
         return new DatabaseSchema(databaseName, isCdcEnabled, tables);
     }
@@ -204,10 +250,56 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
         return byTable;
     }
 
+    /// <summary>
+    /// Every unique index and UNIQUE constraint in the database, grouped by
+    /// table. Tables with no uniqueness rule beyond their primary key simply do
+    /// not appear.
+    /// </summary>
+    private static async Task<Dictionary<string, List<UniqueIndex>>> ReadUniqueIndexesAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        // One index is many rows, so the read is flat and the grouping happens
+        // here. Read into a list first rather than growing nested dictionaries
+        // in the loop: the grouping is then one expression a reader can check
+        // against the query, instead of state carried between iterations.
+        var rows = new List<(string Table, string Index, string Column)>();
+
+        await using var command = new SqlCommand(UniqueIndexesSql, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add((
+                Table: $"{reader.GetString(0)}.{reader.GetString(1)}",
+                Index: reader.GetString(2),
+                Column: reader.GetString(3)));
+        }
+
+        // GroupBy preserves the order rows arrived in, and they arrived in
+        // key_ordinal order, so each index keeps its columns in key order. That
+        // is not load-bearing here the way it is for the primary key — the
+        // planner only asks whether a column is IN an index — but a refusal
+        // names the columns, and naming them in a different order than the
+        // schema declares them reads as a different index.
+        return rows
+            .GroupBy(row => row.Table, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                byTable => byTable.Key,
+                byTable => byTable
+                    .GroupBy(row => row.Index, StringComparer.OrdinalIgnoreCase)
+                    .Select(byIndex => new UniqueIndex(
+                        byIndex.Key,
+                        byIndex.Select(row => row.Column).ToList()))
+                    .ToList(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
     private static async Task<List<SchemaTable>> ReadTablesAsync(
         SqlConnection connection,
         Dictionary<string, List<SchemaColumn>> columnsByTable,
         Dictionary<string, List<string>> keysByTable,
+        Dictionary<string, List<UniqueIndex>> uniqueByTable,
         CancellationToken cancellationToken)
     {
         var tables = new List<SchemaTable>();
@@ -232,6 +324,7 @@ public sealed class SchemaInventory(string connectionString) : ISchemaReader
                 Columns: columnsByTable.TryGetValue(key, out var columns) ? columns : [])
             {
                 PrimaryKey = keysByTable.TryGetValue(key, out var keyColumns) ? keyColumns : [],
+                UniqueIndexes = uniqueByTable.TryGetValue(key, out var indexes) ? indexes : [],
             });
         }
 

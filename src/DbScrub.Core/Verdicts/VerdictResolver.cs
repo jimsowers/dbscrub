@@ -193,6 +193,7 @@ public static class VerdictResolver
         List<ConfigError> problems)
     {
         var path = $"tables[{table.QualifiedName}].columns[{column.Name}]";
+        var problemsBefore = problems.Count;
 
         // A primary key column is refused before anything else, and this one is
         // worth spelling out because all three reasons are independently fatal:
@@ -258,6 +259,107 @@ public static class VerdictResolver
                 Line: 0,
                 Column: 0));
         }
+
+        // Last, and only when nothing more fundamental is already wrong with
+        // this column. A column that cannot be written at all does not also need
+        // to be told about the index it sits in, and the fix for THAT problem
+        // would be the wrong advice.
+        if (problems.Count == problemsBefore)
+        {
+            ValidateUniqueness(table, column, config, path, problems);
+        }
+    }
+
+    /// <summary>
+    /// Refuses a strategy that would write the same value into more than one row
+    /// of a column SQL Server requires to be unique (DECISIONS.md D23, D27).
+    ///
+    /// This is a plan-time refusal for the same reason the others are: uniqueness
+    /// is enforced during the UPDATE, so without this check the tool learns about
+    /// the index from error 2601 on the second row of the batch — partway through
+    /// a run, with earlier tables already rewritten and this one half done.
+    ///
+    /// The rule is about the OUTPUT, not the strategy's name: a replacement is
+    /// allowed here only when the tool can prove every row gets a different one.
+    /// Two can, and both prove it the same way — by seeding the value from the
+    /// primary key, which is unique already.
+    /// </summary>
+    private static void ValidateUniqueness(
+        SchemaTable table,
+        SchemaColumn column,
+        ColumnConfig config,
+        string path,
+        List<ConfigError> problems)
+    {
+        // The three that need no index lookup at all:
+        //
+        //   keep      is not masked, so it keeps whatever distinct values it has.
+        //   email     is seeded from the primary key, so two rows collide only if
+        //             they share a key — and then it is not a key.
+        //   scramble  with "unique": "key" is seeded the same way, and since D28
+        //             the key is written behind a delimiter so the split point is
+        //             unambiguous. That delimiter is what makes this line true;
+        //             without it two keys could produce one value. MaskPlanner
+        //             refuses the key types the delimiter cannot vouch for.
+        if (config.Strategy is ColumnStrategy.Keep or ColumnStrategy.Email
+            || (config.Strategy == ColumnStrategy.Scramble && config.Unique == UniqueMode.Key))
+        {
+            return;
+        }
+
+        var index = table.UniqueIndexesContaining(column.Name).FirstOrDefault();
+
+        if (index is null)
+        {
+            return;
+        }
+
+        var (why, alternative) = config.Strategy switch
+        {
+            // Shape-preserving, and shape is exactly what duplicates share.
+            // 123-45-6789 and 234-56-7890 both scramble to 999-99-9999.
+            ColumnStrategy.Scramble => (
+                "\"scramble\" preserves each value's shape, so two values with the same shape become the "
+                    + "same text",
+                "Add \"unique\": \"key\" to this entry"),
+
+            // One NULL is allowed in a SQL Server unique index. Exactly one:
+            // this is where SQL Server differs from the standard, and where a
+            // config author reasonably expects nulls to be exempt.
+            ColumnStrategy.Null => (
+                "\"null\" writes NULL to every row, and a SQL Server unique index permits only ONE null",
+                "Use \"email\", or \"scramble\" with \"unique\": \"key\""),
+
+            _ => (
+                "\"static\" writes the same value to every row",
+                "Use \"email\" for an address, or \"scramble\" with \"unique\": \"key\""),
+        };
+
+        // A composite index is refused on the same terms, and the message says so
+        // rather than pretending certainty. Whether the other columns still vary
+        // is a fact about the DATA, and this pass reads none — so the choice is
+        // between a refusal that is sometimes unnecessary and a run that
+        // sometimes dies half way. D27 takes the refusal.
+        var scope = index.IsComposite
+            ? $"{index.Name}, which requires ({string.Join(", ", index.Columns)}) to be unique across rows"
+            : $"{index.Name}, which requires every row to hold a different value";
+
+        // The fix is worth stating even when the table has no key, because the
+        // two strategies that survive uniqueness both need one — otherwise the
+        // author fixes this error and lands straight on that one.
+        var key = table.HasPrimaryKey
+            ? "Both give every row a different value, seeded from its primary key."
+            : $"Both seed the value from the row's primary key, and {table.QualifiedName} has none — "
+                + "so this column cannot be masked until the table has one.";
+
+        problems.Add(new ConfigError(
+            ConfigErrorCodes.InvalidValue,
+            path,
+            $"{table.QualifiedName}.{column.Name} is covered by unique index {scope}, but {why}.",
+            $"{alternative}. {key} SQL Server enforces this while the UPDATE runs, so left as it is the "
+                + "run would fail partway through and leave the database half masked.",
+            Line: 0,
+            Column: 0));
     }
 
     /// <summary>Gives every column in a table the same verdict, minus the exemptions.</summary>

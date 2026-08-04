@@ -81,4 +81,60 @@ public static class RowDiscriminator
             _ => c.MaxLengthInCharacters ?? 32,
         });
     }
+
+    /// <summary>
+    /// The width a SPLICED key costs — the key itself plus the delimiter that
+    /// separates it from the scrambled value (DECISIONS.md D28).
+    ///
+    /// A separate method from <see cref="MaxWidth"/> rather than a `+ 1` at the
+    /// call site, because only ONE caller pays for the delimiter. The `email`
+    /// strategy embeds the key between a fixed prefix and a fixed domain, so its
+    /// boundaries are already unambiguous and it needs no delimiter and no extra
+    /// character. Writing the two as one number is how the wrong one gets used.
+    /// </summary>
+    public static int MaxSplicedWidth(IReadOnlyList<SchemaColumn> keyColumns) =>
+        MaxWidth(keyColumns) + 1;
+
+    /// <summary>
+    /// Key column types a row key can be SPLICED from (DECISIONS.md D28). The
+    /// integral types and nothing else, because the list has to satisfy two
+    /// requirements at once and they meet in a narrow place:
+    ///
+    ///   1. The rendering must never contain <see cref="Scrambler.KeyDelimiter"/>,
+    ///      or the split point is in two places and the uniqueness argument
+    ///      collapses. A `varchar` key can hold anything, so it fails here.
+    ///   2. The rendering must be something the VERIFY gate recognises as a key,
+    ///      which is digits and the composite separator. A `uniqueidentifier`
+    ///      renders as hex, whose a–f are letters; a `decimal` brings a '.'; a
+    ///      `datetime` brings ':' and 'T'. Each would satisfy (1) and then
+    ///      produce masked values the gate reports as leaks — a config accepted
+    ///      at plan time that cannot pass verify, which is the exact
+    ///      accepted-then-explodes shape this pass exists to remove.
+    ///
+    /// Widening (2) instead was the alternative, and it was rejected: it means
+    /// teaching the gate to excuse letters, and a rule that excuses more is the
+    /// dangerous direction (DECISIONS.md D17).
+    ///
+    /// An ALLOWLIST, not a list of banned types. For a type nobody thought about
+    /// the honest answer is no, and being wrongly left out costs a config edit —
+    /// with `email` still available, which needs neither property because its key
+    /// sits between a fixed prefix and a fixed domain.
+    /// </summary>
+    private static readonly string[] SpliceableKeyTypes =
+        ["tinyint", "smallint", "int", "bigint"];
+
+    /// <summary>
+    /// Whether a row key built from these columns can be spliced onto a masked
+    /// value — true only when EVERY key column qualifies, since one that does not
+    /// is enough to break the split.
+    /// </summary>
+    public static bool CanSplice(IReadOnlyList<SchemaColumn> keyColumns) =>
+        keyColumns.Count > 0 && keyColumns.All(c =>
+            SpliceableKeyTypes.Contains(c.DataType, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>The key columns that are the reason <see cref="CanSplice"/> said no.</summary>
+    public static IReadOnlyList<SchemaColumn> UnspliceableKeyColumns(IReadOnlyList<SchemaColumn> keyColumns) =>
+        keyColumns
+            .Where(c => !SpliceableKeyTypes.Contains(c.DataType, StringComparer.OrdinalIgnoreCase))
+            .ToList();
 }

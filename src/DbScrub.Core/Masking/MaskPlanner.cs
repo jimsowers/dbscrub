@@ -181,11 +181,13 @@ public static class MaskPlanner
                 {
                     // The discriminator overwrites the tail, so a value can
                     // always hold it — UNLESS the whole column is narrower than
-                    // the widest key the table could produce, in which case the
-                    // result would be truncated mid-run.
+                    // the widest key the table could produce (plus the delimiter
+                    // in front of it), in which case the result would be
+                    // truncated mid-run.
                     if (!RequireKey(table, column, "\"unique\": \"key\"",
                             "give every row a different value", path, problems)
-                        || !RequireWidth(table, column, RowDiscriminator.MaxWidth(table.KeyColumns),
+                        || !RequireSpliceableKey(table, column, path, problems)
+                        || !RequireWidth(table, column, RowDiscriminator.MaxSplicedWidth(table.KeyColumns),
                             "a row key on the end of each value",
                             "Drop \"unique\", or widen the column.",
                             path, reportAs, problems))
@@ -294,6 +296,48 @@ public static class MaskPlanner
             $"To {purpose}, dbscrub seeds each row's value from its primary key — and this table has "
             + "none, so there is nothing to seed from. Add a primary key, or use a strategy that "
             + "writes the same value everywhere (\"static\", \"null\")."));
+
+        return false;
+    }
+
+    /// <summary>
+    /// Refuses `"unique": "key"` on a table whose key cannot be spliced onto a
+    /// masked value (DECISIONS.md D28).
+    ///
+    /// Two things have to be true of the key's text, and only whole numbers
+    /// manage both: it must never contain the delimiter (or the split point is in
+    /// two places and two rows can produce one value), and it must be something
+    /// the verify gate recognises as a key (or every masked value in the column
+    /// is reported as a leak and the run can never be stamped).
+    ///
+    /// Only `scramble` needs this. `email` puts the key between a fixed prefix
+    /// and a fixed domain, so its boundaries never depend on the key's content
+    /// and the gate recognises it by the domain alone.
+    /// </summary>
+    private static bool RequireSpliceableKey(
+        SchemaTable table,
+        SchemaColumn column,
+        string path,
+        List<ConfigError> problems)
+    {
+        if (RowDiscriminator.CanSplice(table.KeyColumns))
+        {
+            return true;
+        }
+
+        var offending = RowDiscriminator.UnspliceableKeyColumns(table.KeyColumns)
+            .Select(c => $"{c.Name} ({c.DataType})");
+
+        problems.Add(Problem(
+            path,
+            $"{table.QualifiedName}.{column.Name} uses \"unique\": \"key\", but the primary key includes "
+            + $"{string.Join(", ", offending)}, which dbscrub cannot splice onto a masked value.",
+            $"The row key is written onto the end of the value after a '{Scrambler.KeyDelimiter}', so it "
+            + "has to be whole numbers: any other type can either contain that character itself — putting "
+            + "the boundary in two places and letting two rows produce the same value — or read as "
+            + "something other than a key to the verify gate, which would then report the whole column as "
+            + "a leak. Use \"email\" if the column holds an address, drop \"unique\", or key the table on "
+            + "an integer."));
 
         return false;
     }

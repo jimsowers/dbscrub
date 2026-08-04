@@ -97,6 +97,49 @@ CREATE TABLE app.Enrollment
 GO
 
 /* ---------------------------------------------------------------------------
+   app.Membership — the uniqueness case and the composite-key case.
+
+   Two things live here that no other table in this fixture has:
+
+     - A COMPOSITE primary key. The mask engine walks a table in key order
+       using a lexicographic predicate — "greater in the first column that
+       differs" — and with a single key column that predicate collapses to
+       `k > @lo`. The interesting form only exists with two, and the seed data
+       below is chosen so a naive one-column comparison SKIPS rows rather than
+       erroring: MemberNumber 100 appears under both organizations, so a walk
+       comparing MemberNumber alone steps straight past (2, 100).
+
+     - UNIQUE rules, in both spellings. A UNIQUE constraint and a
+       CREATE UNIQUE INDEX are the same object to SQL Server — both are rows in
+       sys.indexes with is_unique = 1 — and both are here so the inventory
+       proves it reads the pair rather than only the one it was written for.
+
+   Why the uniqueness matters: SQL Server enforces a unique index DURING an
+   UPDATE. `static` writes the same value to every row, so on Username it would
+   raise error 2601 on the second row, partway through the run, leaving a
+   database that is neither raw nor clean. dbscrub refuses that at plan time
+   (DECISIONS.md D27), and the complete config masks these columns with the two
+   strategies that DO give every row a different value.
+--------------------------------------------------------------------------- */
+CREATE TABLE app.Membership
+(
+    OrganizationId int           NOT NULL,
+    MemberNumber   int           NOT NULL,
+    Username       nvarchar(100) NOT NULL,
+    Email          nvarchar(256) NOT NULL,
+    Nickname       nvarchar(50)      NULL,   -- NOT unique: `static` is fine here
+    CONSTRAINT PK_Membership PRIMARY KEY (OrganizationId, MemberNumber),
+    CONSTRAINT UQ_Membership_Username UNIQUE (Username)
+);
+GO
+
+/*  The other spelling of the same thing. sys.indexes reports this with
+    is_unique = 1 and is_unique_constraint = 0; the constraint above reports
+    both as 1. One query has to find them both.  */
+CREATE UNIQUE INDEX UX_Membership_Email ON app.Membership (Email);
+GO
+
+/* ---------------------------------------------------------------------------
    dbo.LoginAudit — the truncate case (DECISIONS.md D5). Carries PII buried in
    a JSON payload, which is exactly why audit tables are truncated and never
    masked: no column strategy can reach inside that string.
@@ -163,6 +206,24 @@ GO
 
 INSERT INTO app.Enrollment (PersonId, Notes)
 SELECT PersonId, N'Enrolled; contact ' + Email FROM dbo.Person;
+GO
+
+/*  Five rows across two organizations, and MemberNumber 100 deliberately
+    appears in both. Ordered by (OrganizationId, MemberNumber) the rows are
+    (1,100) (1,101) (2,100) (2,101) (2,102) — so a batch that ends at (1,101)
+    must resume at "OrganizationId > 1 OR (OrganizationId = 1 AND MemberNumber
+    > 101)". A predicate comparing MemberNumber alone would resume at
+    "MemberNumber > 101" and silently skip (2,100), which would keep its real
+    values while the run reported success. That is the shape of bug this table
+    exists to catch, and the row-count reconciliation (DECISIONS.md D21) turns
+    it into a failed run.  */
+INSERT INTO app.Membership (OrganizationId, MemberNumber, Username, Email, Nickname)
+VALUES
+    (1, 100, N'alovelace', N'ada.lovelace@example.invalid',   N'Ada'),
+    (1, 101, N'ghopper',   N'grace.hopper@example.invalid',   N'Grace'),
+    (2, 100, N'aturing',   N'alan.turing@example.invalid',    NULL),
+    (2, 101, N'kjohnson',  N'k.johnson@example.invalid',      N'Katherine'),
+    (2, 102, N'mhamilton', N'm.hamilton@example.invalid',     N'Margaret');
 GO
 
 INSERT INTO dbo.LoginAudit (UserName, IpAddress, Payload)
@@ -243,7 +304,27 @@ INNER JOIN sys.schemas AS s        ON s.schema_id  = t.schema_id
 WHERE i.is_primary_key = 1
   AND t.is_ms_shipped = 0
 ORDER BY s.name, t.name, ic.key_ordinal;
+
+/*  Uniqueness rules OTHER than the primary key — what the planner refuses a
+    constant strategy on. Expect two, both on app.Membership: the constraint
+    reports is_unique_constraint = 1, the index reports 0, and dbscrub treats
+    them identically because SQL Server enforces them identically.  */
+SELECT s.name AS SchemaName,
+       t.name AS TableName,
+       i.name AS IndexName,
+       i.is_unique_constraint,
+       ic.key_ordinal,
+       c.name AS ColumnName
+FROM sys.indexes AS i
+INNER JOIN sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+INNER JOIN sys.columns AS c        ON c.object_id  = ic.object_id AND c.column_id = ic.column_id
+INNER JOIN sys.tables  AS t        ON t.object_id  = i.object_id
+INNER JOIN sys.schemas AS s        ON s.schema_id  = t.schema_id
+WHERE i.is_unique = 1
+  AND i.is_primary_key = 0
+  AND t.is_ms_shipped = 0
+ORDER BY s.name, t.name, i.name, ic.key_ordinal;
 GO
 
-PRINT 'DbScrubTest created. Expect 5 user tables: app.Enrollment, dbo.ContactImport, dbo.LoginAudit, dbo.Person, dbo.PersonHistory.';
+PRINT 'DbScrubTest created. Expect 6 user tables: app.Enrollment, app.Membership, dbo.ContactImport, dbo.LoginAudit, dbo.Person, dbo.PersonHistory.';
 GO
