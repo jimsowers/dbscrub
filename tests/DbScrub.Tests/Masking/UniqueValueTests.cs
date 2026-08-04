@@ -57,7 +57,7 @@ public class UniqueValueTests
         // guarantee scramble exists for.
         var result = Scrambler.ScrambleUnique("Lovelace", "42");
 
-        Assert.Equal("Xxxxxx42", result);
+        Assert.Equal("Xxxxx#42", result);
         Assert.Equal("Lovelace".Length, result!.Length);
     }
 
@@ -66,7 +66,149 @@ public class UniqueValueTests
     {
         // Nothing to overwrite into. The planner refuses this strategy on a
         // column too narrow to hold the widest key, so the result always fits.
-        Assert.Equal("12345", Scrambler.ScrambleUnique("Li", "12345"));
+        Assert.Equal("#12345", Scrambler.ScrambleUnique("Li", "12345"));
+    }
+
+    // ---- the delimiter, and the collision it closes (D28) --------------------
+
+    [Fact]
+    public void TwoDifferentKeysCannotProduceTheSameValue()
+    {
+        // The regression that named D28. Without the delimiter both of these
+        // masked to `xxx995`: one splits as "xxx99" + key "5", the other as
+        // "xxx9" + key "95", and nothing in the text says which. A scrambled
+        // digit is a 9 and a key digit is a digit, so the boundary was invisible.
+        var five = Scrambler.ScrambleUnique("emp005", "5");
+        var ninetyFive = Scrambler.ScrambleUnique("emp095", "95");
+
+        Assert.NotEqual(five, ninetyFive);
+    }
+
+    [Fact]
+    public void ValuesFullOfDigitsStayDistinctAcrossAWholeTable()
+    {
+        // The measured case: 5,000 zero-padded account codes, each masked with
+        // its own row key. Before the delimiter this produced 99 duplicates —
+        // on a column whose whole reason for using "unique" is that duplicates
+        // are not allowed.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var key = 1; key <= 5000; key++)
+        {
+            var masked = Scrambler.ScrambleUnique($"acct{key:D5}", key.ToString())!;
+
+            Assert.True(seen.Add(masked), $"Row {key} reused a value another row already has.");
+        }
+    }
+
+    [Fact]
+    public void TheDelimiterIsPaidForInTheWidthCheck()
+    {
+        // An int key is 11 characters at its widest, so a spliced value needs 12.
+        // The email strategy does NOT pay this, because its key sits between a
+        // fixed prefix and a fixed domain and needs no delimiter.
+        var key = new[] { SchemaBuilder.Identity("PersonId") };
+
+        Assert.Equal(11, RowDiscriminator.MaxWidth(key));
+        Assert.Equal(12, RowDiscriminator.MaxSplicedWidth(key));
+    }
+
+    [Fact]
+    public void AColumnTooNarrowForTheDelimitedKeyIsRefusedBeforeTheRun()
+    {
+        // 11 characters holds the widest int key but not the delimiter too.
+        var schema = SchemaBuilder.Database()
+            .Table("dbo.Person", SchemaBuilder.Identity("PersonId"),
+                new SchemaColumn("Code", "char", IsNullable: true, MaxLength: 11,
+                    IsComputed: false, IsIdentity: false))
+            .WithPrimaryKey("PersonId")
+            .Build();
+
+        var plan = Plan(schema, """
+            { "name": "dbo.Person", "columns": [
+                { "name": "Code", "strategy": "scramble", "unique": "key" } ] }
+            """);
+
+        Assert.False(plan.CanRun);
+        Assert.Contains("at least 12 characters", Assert.Single(plan.Problems).Message);
+    }
+
+    [Theory]
+    [InlineData("varchar")]           // can hold '#' itself: the split lands in two places
+    [InlineData("uniqueidentifier")]  // renders as hex, whose a-f the gate reads as letters
+    [InlineData("datetime2")]         // brings ':' and 'T' along
+    public void AKeyThatCannotBeSplicedIsRefused(string keyType)
+    {
+        var schema = SchemaBuilder.Database()
+            .Table("dbo.Person", SchemaBuilder.NotNull("Code", keyType), SchemaBuilder.Column("LastName"))
+            .WithPrimaryKey("Code")
+            .Build();
+
+        var plan = Plan(schema, """
+            { "name": "dbo.Person", "columns": [
+                { "name": "LastName", "strategy": "scramble", "unique": "key" } ] }
+            """);
+
+        Assert.False(plan.CanRun);
+
+        var problem = Assert.Single(plan.Problems);
+        Assert.Contains($"Code ({keyType})", problem.Message);
+        Assert.Contains("\"email\"", problem.Suggestion!);
+    }
+
+    [Fact]
+    public void EveryKeyTypeThePlannerAcceptsSurvivesTheVerifyGate()
+    {
+        // The invariant behind the allowlist, asserted rather than argued. A key
+        // type the planner accepts but the gate does not recognise would be a
+        // config that passes planning and then can never be stamped — accepted,
+        // then explodes, which is what plan-time refusals exist to prevent.
+        foreach (var keyType in new[] { "tinyint", "smallint", "int", "bigint" })
+        {
+            var key = new[] { SchemaBuilder.NotNull("Id", keyType) };
+
+            Assert.True(RowDiscriminator.CanSplice(key), keyType);
+
+            // A negative key brings a '-' along, and a composite brings another.
+            foreach (var discriminator in new[] { "1", "4172", "-5", "1-100" })
+            {
+                var masked = Scrambler.ScrambleUnique("Lovelace", discriminator);
+
+                Assert.True(PlaceholderRules.IsMaskedOutput(masked),
+                    $"{keyType} key '{discriminator}' produced a value the gate calls a leak: {masked}");
+            }
+        }
+    }
+
+    [Fact]
+    public void ACompositeOfIntegersCanBeSpliced()
+    {
+        Assert.True(RowDiscriminator.CanSplice(
+            [SchemaBuilder.Identity("OrgId"), SchemaBuilder.Identity("MemberNumber")]));
+
+        // One bad column is enough to fail the whole key.
+        Assert.False(RowDiscriminator.CanSplice(
+            [SchemaBuilder.Identity("OrgId"), SchemaBuilder.NotNull("Code", "varchar")]));
+    }
+
+    [Fact]
+    public void AnEmailColumnDoesNotPayForADelimiterItDoesNotUse()
+    {
+        // The key sits between "fakeemail" and "@notreal.invalid", so both
+        // boundaries are fixed and the value is unambiguous without one. A shared
+        // width number would have made email columns need a character too many.
+        var schema = SchemaBuilder.Database()
+            .Table("dbo.Person", SchemaBuilder.NotNull("Code", "varchar"),
+                new SchemaColumn("Email", "varchar", IsNullable: true, MaxLength: 256,
+                    IsComputed: false, IsIdentity: false))
+            .WithPrimaryKey("Code")
+            .Build();
+
+        // Same varchar key the test above refuses for scramble.
+        var plan = Plan(schema,
+            """{ "name": "dbo.Person", "columns": [ { "name": "Email", "strategy": "email" } ] }""");
+
+        Assert.True(plan.CanRun);
     }
 
     [Fact]
@@ -91,14 +233,46 @@ public class UniqueValueTests
     [Fact]
     public void ARealValueIsNotMistakenForAUniquelyScrambledOne()
     {
-        // The dangerous direction. Peeling a trailing digit run must not turn a
-        // real Social Security number into something the gate excuses.
+        // The dangerous direction. A real Social Security number carries no
+        // delimiter, so there is nothing for the rule to split on.
         Assert.False(PlaceholderRules.IsMaskedOutput("123-45-6789"));
         Assert.False(Scrambler.LooksScrambledWithKey("123-45-6789"));
 
         // Digits alone are not scrambler output with a key on the end.
         Assert.False(Scrambler.LooksScrambledWithKey("4172"));
         Assert.False(Scrambler.LooksScrambledWithKey("212-555-0100"));
+
+        // A delimiter is not enough on its own: what precedes it still has to be
+        // scrambler output, and a real name is not.
+        Assert.False(Scrambler.LooksScrambledWithKey("Lovelace#42"));
+
+        // Nor is a delimiter with something that is not a key after it.
+        Assert.False(Scrambler.LooksScrambledWithKey("xxxx#alan"));
+        Assert.False(Scrambler.LooksScrambledWithKey("xxxx#"));
+    }
+
+    [Fact]
+    public void ThePrefixIsReadFromTheLastDelimiterNotTheFirst()
+    {
+        // Scramble PRESERVES punctuation, so a value that already contained a
+        // '#' keeps it — and the splice always adds the rightmost one. Splitting
+        // at the first would leave "9#xxx" as the supposed key and flag a
+        // correctly masked value as a leak.
+        var masked = Scrambler.ScrambleUnique("ref#99/abcd", "42")!;
+
+        Assert.Contains(Scrambler.KeyDelimiter, masked);
+        Assert.True(Scrambler.LooksScrambledWithKey(masked), $"Not recognised: {masked}");
+    }
+
+    [Fact]
+    public void ACompositeKeyIsStillRecognisedAsMaskedOutput()
+    {
+        // The composite separator is a hyphen, which the key half of the rule
+        // has to allow without allowing letters.
+        var masked = Scrambler.ScrambleUnique("alovelace", RowDiscriminator.For([1, 100]))!;
+
+        Assert.Equal("xxx#1-100", masked);
+        Assert.True(PlaceholderRules.IsMaskedOutput(masked));
     }
 
     // ---- the email strategy ------------------------------------------------

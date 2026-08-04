@@ -1,11 +1,11 @@
 # Handoff — end of step 5
 
-Last updated 2026-08-03. **The v0 milestone is MET.** `clean` masks a database,
+Last updated 2026-08-04. **The v0 milestone is MET.** `clean` masks a database,
 sweeps it, and marks it clean only if the sweep comes back empty. Steps 1–5 are
 done, less rename and orphaned-user repair, which are deferred indefinitely
 (DECISIONS.md D25).
 
-385 unit tests, 0 warnings (warnings are errors).
+414 unit tests, 0 warnings (warnings are errors).
 
 ## The local environment
 
@@ -35,60 +35,68 @@ Two configs for the fixture, and **the pair is the demo**:
   something to list and `clean` FAILS verify on the two free-text `Notes`
   columns that hide a phone number and an email.
 - `config/dbscrubtest.complete.json` — every column resolved, so a run passes
-  and earns the stamp. Uses `email` and `scramble`+`unique`.
+  and earns the stamp. Uses `email` and `scramble`+`unique`, on both a
+  single-column key (`dbo.Person`) and a composite one (`app.Membership`).
 
 ## VERIFIED against the live database
 
-- `SchemaInventory`, including the primary-key read, against SQL Server 2025.
+All by hand, on SQL Server 2025, `localhost\MSSQLSERVER02`.
+
+- `SchemaInventory`, including the primary-key read and the unique-index read.
 - `report`, repeatedly, including the plan for both fixture configs (exit 0).
-- `clean` ran end to end at least once — CDC on `DbScrubTest` now reads `off`,
-  which only the hygiene pass could have done.
+- **The verify → stamp path, end to end.** `clean` with
+  `dbscrubtest.complete.json` exits 0 and `status` reports SANITIZED. This had
+  never completed before 2026-08-04.
+- **The `email` strategy and `scramble`+`unique`**, single-column and composite
+  keys: `fakeemail1@notreal.invalid` beside `Xxxxxx#1` in `dbo.Person`, and
+  `fakeemail1-100@notreal.invalid` beside `xxx#1-100` in `app.Membership`.
+- **Multi-batch walks**, at `"batchSize": 2`, in all three mask modes. The
+  masked data is identical to the single-batch run, which is the assertion that
+  matters — a broken keyset predicate would show up as a skipped row.
+- **A composite primary key**, through a batch boundary. `app.Membership` seeds
+  MemberNumber 100 under two organizations on purpose, so a predicate comparing
+  the second key column alone would step straight past `(2, 100)`; all five rows
+  come back masked and reconciled 5/5.
+- **The unique-index refusal** (D27): `static` on `app.Membership.Username`
+  exits 5 naming `UQ_Membership_Username`, before anything is modified.
 
 ## NOT verified — read this before trusting anything
 
-- **The stamp has never been written.** `dbscrub status` on `DbScrubTest` says
-  NOT SANITIZED. Verify has probably run and correctly failed (the incomplete
-  config leaves two `Notes` columns unmasked), but nothing has ever completed
-  the verify→stamp path. **This is the single most valuable thing to prove
-  next.** Rebuild the fixture, run `clean` with `dbscrubtest.complete.json`,
-  then `status` — expect exit 0 and SANITIZED.
-- **`email` and `scramble`+`unique` have never executed.** Unit-tested only. The
-  complete config uses both, so the run above exercises them. Success looks like
-  `fakeemail1@notreal.invalid` beside `Xxxxx1` in `dbo.Person`.
-- **Multi-batch walks have never executed.** Every fixture table fits in one
-  batch of 5000, so the second iteration's keyset predicate — the highest-risk
-  unproven code in the tool — has only ever run in unit tests. Force it: set
-  `"batchSize": 2` in the complete config and re-run against `dbo.Person`'s four
-  rows. Five minutes, and the row-count reconciliation (D21) turns a bug into a
-  failed run rather than silent unmasked data.
-- **No composite primary key has reached SQL Server.** The lexicographic keyset
-  predicate is unit-tested for 1–3 columns and never executed. A legacy schema
-  like AAVSB probably has one; a fixture table would be ~20 lines of SQL.
 - **`history: "mask"`** is implemented and unit-tested with no fixture.
+- **A filtered unique index** has never reached the inventory. D27 treats one
+  like any other, which is conservative and may refuse a `null` strategy that
+  would in fact have been legal under a `WHERE col IS NOT NULL` filter.
+- **`email` on a table with a `binary`/`varbinary` primary key** would give
+  every row the SAME address — `Convert.ToString` on a byte array returns
+  `System.Byte[]`, not the value, so the discriminator is a constant. Found
+  while writing D28 and NOT fixed: `scramble`+`unique` is already refused on such
+  a key by D28's allowlist, but `email` accepts any key type. A few lines beside
+  `RowDiscriminator.CanSplice`, and it needs its own predicate rather than that
+  one — `email` legitimately works with keys D28 refuses.
 - **The live-SQL integration tier does not exist** (CLAUDE.md "Testing tiers").
   Everything above was run by hand.
 
 ## What is left, in the order I would do it
 
-1. **Unique-index reading in `SchemaInventory`.** Owed since D23 and still
-   missing. `static` on a unique-indexed column sets every row the same and
-   violates the index MID-RUN, leaving a half-masked database. AAVSB plausibly
-   has a unique email or username. Converts a runtime explosion into a
-   plan-time refusal; a few lines beside the primary-key query.
-2. **Computed columns are reported as having no rule.** They cannot be written
+Item 1 (unique-index reading) is DONE — see D27, and D28 for the collision it
+turned up in `scramble`+`unique`.
+
+1. **Computed columns are reported as having no rule.** They cannot be written
    and hold whatever their sources hold, so there is one legal answer —
    `FullName` needed an explicit `keep` in the complete config. System-generated
    columns are already exempt on identical reasoning (`VerdictResolver.
    MakeVerdict`). On AAVSB every computed column sits in that list permanently,
    training people to stop reading it, which is the failure the list exists to
    prevent.
-3. **Doc sync.** README and `docs/getting-started.html` still say "the
+2. **Doc sync.** README and `docs/getting-started.html` still say "the
    unclassified list" and "reported as UNCLASSIFIED" in about six places. The
    OUTPUT now says "columns with no rule" (D-less change, in the voice commit),
-   so the docs disagree with the tool.
-4. **Uncomment step 3 of `scripts/refresh-local.sample.ps1`.** It is commented
+   so the docs disagree with the tool. `docs/getting-started.html` also predates
+   the `email` strategy and the `unique` modifier; README caught up with both in
+   the D27/D28 change.
+3. **Uncomment step 3 of `scripts/refresh-local.sample.ps1`.** It is commented
    out because stamping did not exist. It does now.
-5. **"Keep only N rows" at table level.** Discussed, not designed in full.
+4. **"Keep only N rows" at table level.** Discussed, not designed in full.
    Wanted because a table with thousands of rows is usually only useful with 50.
    Two things make it non-trivial: trimming a table with inbound foreign keys
    requires trimming the whole graph (that is FK-graph subsetting, on the v2
@@ -96,8 +104,9 @@ Two configs for the fixture, and **the pair is the demo**:
    The tractable subset is: allow it only on tables nothing references, keep the
    HIGHEST primary keys so it is deterministic and recent, and run it in the
    pre-mask phase so masking then has 50 rows to do instead of 50,000. Needs
-   foreign-key reading, which bundles naturally with item 1.
-6. **D23's `phone`/`ssn` generators**, if wanted. The verify gate knows three
+   foreign-key reading — the same shape of work as D27's unique-index read, in
+   the same place in `SchemaInventory`.
+5. **D23's `phone`/`ssn` generators**, if wanted. The verify gate knows three
    shapes; `email` now has a generator for one of them. Nothing needs the other
    two yet.
 
@@ -132,6 +141,12 @@ All in `docs/DECISIONS.md` with the rejected alternatives.
   definition of done changed to exclude them.
 - **D26** — `email` is a GENERATED strategy, because the tool must own the shape
   in order to recognise it later.
+- **D27** — unique indexes are read and a strategy that cannot promise a
+  distinct value per row is refused at plan time, conservatively: composite and
+  filtered indexes are refused on the same terms rather than reasoned about.
+- **D28** — the row key is spliced behind a `#` delimiter. Plain concatenation
+  was ambiguous — a scrambled digit is a `9` and so is a key digit — and
+  produced duplicate values on ~2% of digit-bearing rows.
 
 ## Bugs found in earlier steps, all fixed
 
@@ -175,15 +190,18 @@ asking what the verify gate thinks of it afterwards.
 > before writing any code.
 >
 > v0 is done: `dbscrub clean` masks a database, verifies every string column,
-> and stamps it only if that sweep is clean. 385 tests pass.
+> and stamps it only if that sweep is clean. 414 tests pass.
 >
-> Read "NOT verified" in HANDOFF.md first. The stamp path has never completed
-> successfully against a real database, and neither has the `email` strategy,
-> `scramble`+`unique`, or a multi-batch walk. Proving those is worth more than
-> new features — start by rebuilding the fixture and running `clean` with
-> `config/dbscrubtest.complete.json`, then `dbscrub status`.
+> The whole pipeline is now proven against the live fixture — stamp, `email`,
+> `scramble`+`unique`, multi-batch walks and a composite key — so "VERIFIED
+> against the live database" in HANDOFF.md is the short list and "NOT verified"
+> is the one to read.
 >
-> After that, "What is left" lists the work in the order I would do it. Item 1
-> (unique-index reading) is a real bug waiting to happen on AAVSB.
+> "What is left" lists the work in the order I would do it. The one real bug
+> named in "NOT verified" is `email` on a binary primary key, which would give
+> every row the same address; it is a few lines and has no fixture.
+>
+> The bigger lever is not code: `config/aavsb.masking.json` still does not
+> exist, and the tool has nothing to be useful on until it does.
 >
 > Work on a feature branch, one squashed commit, never push to main.

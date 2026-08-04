@@ -30,6 +30,24 @@ public static class Scrambler
     public const char Digit = '9';
 
     /// <summary>
+    /// Separates the scrambled part of a value from the row key spliced onto its
+    /// end (DECISIONS.md D28).
+    ///
+    /// Without it the two run together and the boundary is invisible, because a
+    /// scrambled digit is a `9` and a key digit is also a digit — so `xxxx99991`
+    /// is both "xxxx9999 plus key 1" and "xxxx999 plus key 91". Two different
+    /// rows, one value, on a column the config asked to make unique. Measured on
+    /// zero-padded account codes it collided on about 2% of 5,000 rows.
+    ///
+    /// With the delimiter the split point is unambiguous, so two outputs can only
+    /// be equal if their keys are equal — which they never are. That argument
+    /// holds only while the key itself cannot contain this character, which is
+    /// why <see cref="RowDiscriminator.RendersWithoutDelimiter"/> exists and why
+    /// the planner refuses key types it cannot vouch for.
+    /// </summary>
+    public const char KeyDelimiter = '#';
+
+    /// <summary>
     /// Scrambles a value. NULL stays NULL — a null is already the absence of
     /// data, and inventing a value for it would change what the row means.
     /// </summary>
@@ -81,18 +99,22 @@ public static class Scrambler
     }
 
     /// <summary>
-    /// Scrambles, then overwrites the TAIL with the row's key so no two rows
-    /// share a value (DECISIONS.md D23).
+    /// Scrambles, then overwrites the TAIL with a delimiter and the row's key so
+    /// no two rows share a value (DECISIONS.md D23, D28).
     ///
     /// Overwriting rather than appending is what preserves length. `Xxxxxxx`
-    /// with key 42 becomes `Xxxxx42`, still seven characters — so a fixed-width
+    /// with key 42 becomes `Xxxx#42`, still seven characters — so a fixed-width
     /// column still fits and scramble keeps the one guarantee it exists for.
     /// Appending would overflow a char(11) and break it.
     ///
-    /// When the value is SHORTER than the key there is nothing to overwrite into
-    /// and the result is the key alone. That grows the value, which is why the
-    /// planner refuses this strategy on a column too narrow to hold the widest
-    /// key the table could produce.
+    /// The delimiter is what makes the result actually unique rather than
+    /// nearly so; see <see cref="KeyDelimiter"/> for the collision it closes.
+    /// It costs one character, which the planner accounts for before the run.
+    ///
+    /// When the value is SHORTER than delimiter-plus-key there is nothing to
+    /// overwrite into and the result is that tail alone. That grows the value,
+    /// which is why the planner refuses this strategy on a column too narrow to
+    /// hold the widest key the table could produce.
     /// </summary>
     public static string? ScrambleUnique(string? value, string discriminator)
     {
@@ -105,12 +127,14 @@ public static class Scrambler
             return null;
         }
 
-        if (scrambled.Length <= discriminator.Length)
+        var tail = KeyDelimiter + discriminator;
+
+        if (scrambled.Length <= tail.Length)
         {
-            return discriminator;
+            return tail;
         }
 
-        return string.Concat(scrambled.AsSpan(0, scrambled.Length - discriminator.Length), discriminator);
+        return string.Concat(scrambled.AsSpan(0, scrambled.Length - tail.Length), tail);
     }
 
     /// <summary>
@@ -168,10 +192,16 @@ public static class Scrambler
     /// unhandled, the verify gate would flag every uniquely-masked column and no
     /// correctly scrubbed database could be stamped — the same trap D17 records.
     ///
-    /// Stays conservative by peeling only a TRAILING run of digits and hyphens
-    /// (the composite-key separator) and requiring everything before it to be
-    /// scrambler output. A real Social Security number peels to `123-45-` whose
-    /// remaining digits are not 9s, so it is not excused.
+    /// Since D28 the key sits behind a delimiter, so this no longer has to guess
+    /// where it starts: split at the LAST delimiter, require what follows to look
+    /// like a key (digits and the composite separator, nothing else), and require
+    /// what precedes it to be scrambler output. The last one rather than the
+    /// first because the scrambled part preserves punctuation and may contain a
+    /// delimiter of its own — the splice always adds the rightmost one.
+    ///
+    /// Conservative in both directions. A real Social Security number has no
+    /// delimiter at all, so it is never excused; nor is a value that merely ends
+    /// in digits.
     /// </summary>
     public static bool LooksScrambledWithKey(string? value)
     {
@@ -180,15 +210,35 @@ public static class Scrambler
             return false;
         }
 
-        var end = value.Length;
-        while (end > 0 && (char.IsAsciiDigit(value[end - 1]) || value[end - 1] == '-'))
+        var delimiter = value.LastIndexOf(KeyDelimiter);
+
+        // No delimiter means no spliced key, and LooksScrambled has already had
+        // its say about the rest.
+        if (delimiter < 0)
         {
-            end--;
+            return false;
         }
 
-        // Nothing peeled means there is no discriminator, and LooksScrambled has
-        // already had its say. Everything peeled means the value is digits alone,
-        // which this must not excuse.
-        return end != value.Length && end != 0 && LooksScrambled(value[..end]);
+        var key = value.AsSpan(delimiter + 1);
+
+        // An empty key is a value that merely ends in the delimiter, and a key
+        // of anything but digits and separators is not one this tool wrote.
+        if (key.IsEmpty)
+        {
+            return false;
+        }
+
+        foreach (var c in key)
+        {
+            if (!char.IsAsciiDigit(c) && c != RowDiscriminator.CompositeSeparator)
+            {
+                return false;
+            }
+        }
+
+        // Everything before the delimiter has to be scrambler output. That is
+        // also what rejects the degenerate `#42` — a value so short the splice
+        // replaced all of it — because there is nothing there to have scrambled.
+        return LooksScrambled(value[..delimiter]);
     }
 }

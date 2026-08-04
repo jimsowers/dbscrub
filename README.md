@@ -272,8 +272,22 @@ except these" would silently cover new columns as well.
 |---|---|---|
 | `static` | Every row gets the fixed `value` you supply | The value must fit the column's type and length |
 | `scramble` | Replaced in place — letters become `x`, digits become `9`, so length and shape survive | Text columns only, and the table needs a primary key |
+| `email` | A generated address per row, `fakeemail15@notreal.invalid`, where 15 is the row's key | Text column, a primary key to vary by, and room for the address |
 | `null` | Emptied | Only if the column allows nulls |
 | `keep` | Left alone. You looked, there is no personal data here | — |
+
+Add `"unique": "key"` to a `scramble` entry when every row needs a *different*
+fake value — otherwise everyone called Smith becomes `Xxxxx` and the copy is hard
+to test against. The row's primary key is written onto the end of the masked
+value behind a `#`, so `Lovelace` in row 42 becomes `Xxxxx#42`: still eight
+characters, and no two rows alike. It needs a whole-number primary key and one
+extra character of column width for the `#`.
+
+`email` is a strategy rather than a `static` value on purpose. DbScrub defines
+that address shape, so the verify gate can recognise a million distinct
+generated addresses without being handed a list — and `.invalid` is reserved by
+RFC 2606, so it can never be registered and dev mail aimed at it never leaves
+the building.
 
 Everything in that last column is verified against the real database *before*
 anything is modified. A `"value": "not-a-social-security-number"` aimed at a
@@ -290,7 +304,7 @@ still fit. But where the *shape itself* is the sensitive part, reach for
 `static` instead. The sample config uses `static` for `Email` for exactly this
 reason.
 
-Two columns you cannot mask, both refused before anything runs:
+Three things you cannot mask, all refused before anything runs:
 
 - **The primary key.** DbScrub rewrites a table by walking it in key order, so
   changing the key underneath that walk would skip rows — and a skipped row keeps
@@ -301,6 +315,13 @@ Two columns you cannot mask, both refused before anything runs:
   which means being able to point at one row. Without a key there is nothing to
   point with. Add a key, or use `static`/`null` — those write the same value
   everywhere and need no key.
+- **A repeated value in a column that must be unique.** If a column carries a
+  unique index or UNIQUE constraint, `static` and `null` write the same value to
+  every row and `scramble` collides whenever two values share a shape. SQL Server
+  enforces uniqueness *while the UPDATE runs*, so unchecked this fails partway
+  through and leaves the database half masked. DbScrub reads those indexes and
+  refuses up front, naming the index. Use `email`, or `scramble` with
+  `"unique": "key"` — both give every row a different value.
 
 ### Other settings
 

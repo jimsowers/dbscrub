@@ -374,6 +374,7 @@ than silently truncated. The hygiene pass emptied history unconditionally, so
 that config keyword had been reading as intent and doing the opposite.
 
 ## D23 — Uniqueness is a MODIFIER on a strategy, seeded from the primary key
+## (the unique-index read landed in D27; the output shape was corrected by D28)
 
 Requirement raised after step 4: masking every surname to `Xxxxx` makes a dev
 database hard to test against, because nothing distinguishes one row from
@@ -420,6 +421,11 @@ supersede it once a real database has shown what is missing.
 ### The discriminator overwrites the tail; it does not append
 
 `Xxxxxxx` with key 42 becomes `Xxxxx42`, NOT `Xxxxxxx42`.
+
+(D28 later put a delimiter between the two halves — `Xxxx#42` — because plain
+concatenation turns out to be ambiguous and can produce duplicates. The length
+argument below is unchanged and is why the delimiter comes out of the tail
+rather than being added to it.)
 
 Appending breaks the length guarantee that `scramble` exists for and overflows
 fixed-width columns — a `char(11)` SSN has no spare room, and neither does most
@@ -609,6 +615,10 @@ TLD and that domain is registrable by someone.
 original request — distinguishable names — and needs no template because
 scrambler output is opaque, every character interchangeable.
 
+(Corrected by D28 to `Xxxx#42`. "Every character interchangeable" is exactly why
+plain concatenation was ambiguous: a scrambled digit is a `9` and a key digit is
+a digit, so nothing in the text says where one ends and the other begins.)
+
 ### Consequence for verify
 
 Two new placeholder rules, which is exactly why D17's list was written as a list.
@@ -624,6 +634,178 @@ every shape the gate can flag would be one the tool can produce correctly and
 recognise. That symmetry is appealing and stays well short of Bogus-style
 realism (v1, D2). Not built: nothing needs `phone` or `ssn` generation yet, and
 a closed set earns its keep only when its members are used.
+
+## D27 — Uniqueness is read from the schema and refused at plan time, conservatively
+
+The bug D23 recorded and left open: `SchemaInventory` read primary keys and
+nothing else, so a `static` strategy on a column carrying a unique index set
+every row to the same value and SQL Server raised error 2601 — **during the
+UPDATE**, on the second row, with earlier tables already rewritten. The run
+stopped with the database neither raw nor clean, and nothing about it looked
+wrong afterwards. AAVSB plausibly has a unique username or email.
+
+`SchemaInventory` now reads every unique index and UNIQUE constraint (one
+query: they are the same object, distinguished only by a flag), and
+`VerdictResolver` refuses the strategies that cannot promise a distinct value
+per row.
+
+### What is refused, and what survives
+
+| strategy | on a unique column | why |
+|---|---|---|
+| `static` | REFUSED | one value for every row |
+| `null` | REFUSED | a SQL Server unique index permits exactly ONE null — this is where it departs from the standard, and where an author reasonably expects nulls to be exempt |
+| `scramble` | REFUSED | preserves shape, and shape is what duplicates share: `123-45-6789` and `234-56-7890` both become `999-99-9999` |
+| `scramble` + `unique: "key"` | allowed | seeded from the primary key (but see D28) |
+| `email` | allowed | seeded from the primary key |
+| `keep` | allowed | nothing is written |
+
+Bare `scramble` is included deliberately. Refusing only the constants was
+considered and rejected: scramble on a unique column is a coin flip that comes
+up duplicate whenever two values share a shape, which on a column of same-shaped
+identifiers is most pairs of them. That is the same mid-run explosion, arriving
+less predictably.
+
+### Composite indexes are refused on the same terms
+
+A unique index over `(TenantId, Email)` might survive a constant `Email` if
+`TenantId` still varies. Whether it does is a fact about the DATA, and the
+planning pass reads none — deliberately, because that is what lets it refuse
+before anything is modified.
+
+Considered: refuse only when EVERY column of the index gets a constant strategy
+(the provably fatal case). Rejected — it never refuses wrongly, but it lets the
+partial case through to SQL Server mid-run, which is the failure this entry
+exists to remove. Also considered and rejected as gold-plating: a carve-out for
+the case where the index's untouched columns contain the whole primary key, which
+is provably safe but describes an index that is already redundant.
+
+So the rule is per COLUMN, the message names the whole index so the reader can
+see what it spans, and a refusal that was not strictly necessary costs a config
+edit. The other mistake costs a half-masked database.
+
+### Filtered indexes are read like any other
+
+A filtered unique index (`WHERE Email IS NOT NULL`) may not constrain the rows a
+run is about to write — a `null` strategy under exactly that filter is safe. The
+filter is arbitrary SQL this tool does not parse, so it cannot tell. It refuses,
+for the reason above.
+
+### Disabled indexes are ignored
+
+`is_disabled = 1` enforces nothing, so a refusal on its account would be a
+refusal with no failure behind it. Included columns are excluded too: they sit
+in the leaf pages and take no part in uniqueness.
+
+### The primary key keeps its own message
+
+A primary key is a unique index, so both checks could fire on one column. The
+inventory excludes primary keys from the uniqueness read and the key check runs
+first, because D20's message is the more specific one and the only one whose fix
+(`keep`) is right. Same reason a column that cannot be WRITTEN at all — computed,
+identity, GENERATED ALWAYS — reports that instead: uniqueness advice would be
+advice that does not work.
+
+## D28 — The row key is spliced behind a delimiter, because concatenation is ambiguous
+
+Found while writing D27's refusal, which allows `scramble` + `unique: "key"` on a
+unique column **on the strength of a guarantee that did not hold**.
+
+D23 argued uniqueness comes for free: the discriminator is the primary key, keys
+are unique, so no two rows can collide. The keys were indeed all distinct. The
+flaw was in the splice, not the seed.
+
+### The collision
+
+The key OVERWRITES the tail, so where it starts depends on how long it is. The
+scrambled characters to its left are `9`s wherever the original held a digit, and
+a `9` is indistinguishable from a key digit:
+
+    acct00001  key 1   ->  xxxx99999  ->  overwrite last 1  ->  xxxx9999|1
+    acct00091  key 91  ->  xxxx99999  ->  overwrite last 2  ->  xxxx999|91
+
+Both produce `xxxx99991`. Read left to right it is equally "prefix `xxxx9999`
+plus key `1`" and "prefix `xxxx999` plus key `91`". Two rows, two distinct keys,
+one value — on a column whose whole reason for asking for `unique` is that
+duplicates are not permitted.
+
+Measured: 99 duplicates in 5,000 rows of zero-padded account codes (~2%). Zero in
+20,000 rows of a scrambled surname, because scrambled letters are `x` and can
+never impersonate a key digit. So the failure is concentrated on values
+containing digits — identifiers, codes, account numbers — which are exactly the
+columns that carry unique indexes. That correlation is what made this worth
+fixing rather than documenting.
+
+### The fix
+
+A delimiter the key cannot contain, written between the two halves:
+
+    Xxxxxxx  with key 42  ->  Xxxx#42     (still seven characters)
+
+The split point is then unambiguous, and two outputs can be equal only if their
+keys are equal, which they never are. Length is still preserved — the delimiter
+comes out of the same tail, not added to it — so the guarantee `scramble` exists
+for is untouched. It costs one character of column width, charged through
+`RowDiscriminator.MaxSplicedWidth` at plan time.
+
+`email` is unaffected and pays nothing. Its key sits between a fixed prefix and a
+fixed domain, so both boundaries are known without a delimiter. The two widths
+are separate methods for that reason: one number serving both is how the wrong
+one gets used.
+
+### Only whole-number keys can be spliced, and the rest are refused
+
+Two things have to be true of the key's text, and the list of types that manage
+both is narrower than either alone:
+
+1. **It can never contain the delimiter.** Otherwise the split lands in two
+   places and the uniqueness argument collapses. A `varchar` key can hold
+   anything, so it fails here; a `binary` one does not render per value at all.
+2. **The verify gate has to recognise it as a key**, which means digits and the
+   composite separator. This is the requirement that surprised: a
+   `uniqueidentifier` renders as hex, whose `a`–`f` are letters; a `decimal`
+   brings a `.`; a `datetime` brings `:` and `T`. Every one of them satisfies (1)
+   and then produces masked values the gate reports as leaks — a config accepted
+   at plan time that could never be stamped, which is precisely the
+   accepted-then-explodes shape this pass exists to remove.
+
+So the allowlist is `tinyint`, `smallint`, `int`, `bigint`, and `unique: "key"`
+on any other key is a plan-time refusal naming the column and its type.
+
+Widening (2) instead — teaching the gate to excuse hex — was rejected. A rule
+that excuses MORE is the dangerous direction, and D17 already fixed that
+direction as the one to be conservative about.
+
+An ALLOWLIST, not a list of banned types: for a type nobody thought about, the
+honest answer is no, and being wrongly left out costs a config edit. Only
+`scramble` needs this. `email` still works with any key that renders per row,
+because its key sits between a fixed prefix and a fixed domain — the gate
+recognises the DOMAIN and never has to parse the key at all.
+
+### Alternatives considered
+
+1. **Pad every key to a fixed width.** Equal lengths remove the ambiguity with no
+   delimiter. Rejected: the width the planner already requires is the WIDEST the
+   key could be, so an `int` key pads to 11 characters — and a seven-character
+   surname is then shorter than its own discriminator and becomes the padded
+   number outright. It would trade a 2% collision rate for destroying shape
+   preservation on every short value.
+2. **Refuse `scramble` + `unique` on unique columns, keep it elsewhere.**
+   Rejected: it leaves a unique `Username` with no usable strategy (`email`
+   writes the wrong shape), and leaves the collision live everywhere else, where
+   it is merely quieter.
+3. **Document the limit and move on.** Rejected: D27 was in the middle of
+   allowing this strategy precisely because it promised distinct values.
+
+### Consequence for verify
+
+`Scrambler.LooksScrambledWithKey` no longer has to guess where the key begins. It
+splits at the LAST delimiter — the scrambled part preserves punctuation and may
+contain one of its own, and the splice always adds the rightmost — requires what
+follows to be digits and the composite separator, and requires what precedes it
+to be scrambler output. That is strictly more precise than peeling a trailing
+digit run, and it still refuses to excuse a real value: an unmasked Social
+Security number carries no delimiter at all.
 
 ## Roadmap
 

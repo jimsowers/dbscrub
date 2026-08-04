@@ -66,6 +66,26 @@ internal sealed class SchemaBuilder
         return this;
     }
 
+    /// <summary>
+    /// Gives the table added most recently a unique index or UNIQUE constraint
+    /// over the named columns. The two are the same object to SQL Server, so
+    /// there is one method rather than two.
+    /// </summary>
+    public SchemaBuilder WithUniqueIndex(string name, params string[] columns)
+    {
+        if (_tables.Count == 0)
+        {
+            throw new InvalidOperationException("Add a table before giving it a unique index.");
+        }
+
+        _tables[^1] = _tables[^1] with
+        {
+            UniqueIndexes = [.. _tables[^1].UniqueIndexes, new UniqueIndex(name, columns)],
+        };
+
+        return this;
+    }
+
     /// <summary>Adds a system-versioned temporal table plus its history table.</summary>
     public SchemaBuilder TemporalTable(string qualifiedName, string historyQualifiedName, params string[] columnNames)
     {

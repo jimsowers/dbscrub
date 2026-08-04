@@ -39,6 +39,20 @@
       ]
     },
     {
+      "$comment": "The uniqueness case. Username carries a UNIQUE constraint and Email a unique index, so neither may be masked with a strategy that writes the same value twice — `static` and `null` are refused on both at plan time (DECISIONS.md D27). The two strategies here are the ones that seed each value from the row's primary key, which is unique already. Nickname carries no unique rule, so `static` is fine on it: the refusal is scoped to the columns that actually hold the constraint.",
+      "name": "app.Membership",
+      "columns": [
+        {
+          "$comment": "Composite primary key. Both halves are keep for the usual reason (DECISIONS.md D20), and together they are what the other columns' fake values are seeded from — key 1-100 gives fakeemail1-100@notreal.invalid.",
+          "name": "OrganizationId", "strategy": "keep", "reason": "part of the composite primary key"
+        },
+        { "name": "MemberNumber",   "strategy": "keep",     "reason": "part of the composite primary key" },
+        { "name": "Username",       "strategy": "scramble", "unique": "key" },
+        { "name": "Email",          "strategy": "email" },
+        { "name": "Nickname",       "strategy": "static",   "value": "[redacted]" }
+      ]
+    },
+    {
       "$comment": "Audit table: truncated, never masked (DECISIONS.md D5). Its Payload column holds JSON with an email and an SSN inside it, and no column-level rule can reach in there.",
       "name": "dbo.LoginAudit",
       "strategy": "truncate"

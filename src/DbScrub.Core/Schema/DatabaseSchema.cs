@@ -59,6 +59,31 @@ public sealed record SchemaTable(
     public bool HasPrimaryKey => PrimaryKey.Count > 0;
 
     /// <summary>
+    /// Every UNIQUE constraint and unique index on this table, EXCLUDING the
+    /// primary key — a masked key column is already refused for its own reasons
+    /// (DECISIONS.md D20), with a better message than uniqueness could give.
+    ///
+    /// Read because SQL Server enforces uniqueness DURING the UPDATE. Without
+    /// this the tool discovers a unique column the way error 2601 discovers it:
+    /// partway through a run, on the second row, leaving a database that is
+    /// neither raw nor clean (DECISIONS.md D23, D27).
+    ///
+    /// An init property for the same reason <see cref="PrimaryKey"/> is one, and
+    /// with the same caveat: like every collection member on a record it
+    /// compares by REFERENCE, so tests assert on the contents rather than on
+    /// whole table objects.
+    /// </summary>
+    public IReadOnlyList<UniqueIndex> UniqueIndexes { get; init; } = [];
+
+    /// <summary>
+    /// The unique indexes <paramref name="columnName"/> takes part in — empty
+    /// for most columns, and the thing the planner asks about before allowing a
+    /// strategy that writes the same value to more than one row.
+    /// </summary>
+    public IReadOnlyList<UniqueIndex> UniqueIndexesContaining(string columnName) =>
+        UniqueIndexes.Where(index => index.Contains(columnName)).ToList();
+
+    /// <summary>
     /// The key columns resolved against <see cref="Columns"/>, in key order.
     /// The mask engine needs the column's TYPE to bind a parameter, not just
     /// its name.
@@ -75,6 +100,42 @@ public sealed record SchemaTable(
         PrimaryKey.Any(name => string.Equals(name, columnName, StringComparison.OrdinalIgnoreCase));
 
     public override string ToString() => QualifiedName;
+}
+
+/// <summary>
+/// One uniqueness rule on a table: a UNIQUE constraint or a unique index.
+///
+/// The two are the same thing to SQL Server — a UNIQUE constraint IS a unique
+/// index with <c>is_unique_constraint = 1</c> set on it — so one query finds
+/// both, and this type deliberately does not distinguish them. What matters to
+/// the mask engine is identical either way: writing a duplicate raises error
+/// 2601/2627 and rolls the batch back.
+/// </summary>
+/// <param name="Name">
+/// The index name, so a refusal can say WHICH rule it would break. A person
+/// looking at a schema they did not write needs the name to find it.
+/// </param>
+/// <param name="Columns">
+/// The key columns, in key order. Included columns are excluded by the reader:
+/// they live in the leaf pages and take no part in uniqueness, so treating one
+/// as constrained would refuse a config that was fine.
+/// </param>
+public sealed record UniqueIndex(string Name, IReadOnlyList<string> Columns)
+{
+    /// <summary>Whether the named column takes part in this rule. Case-insensitive, like SQL Server.</summary>
+    public bool Contains(string columnName) =>
+        Columns.Any(name => string.Equals(name, columnName, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// True when uniqueness is over more than one column, so a duplicate in this
+    /// column alone is not necessarily a violation — the tuple is what has to
+    /// stay distinct. The planner still refuses, because whether the other
+    /// columns vary is a fact about the DATA, and a plan is built without
+    /// reading any (DECISIONS.md D27).
+    /// </summary>
+    public bool IsComposite => Columns.Count > 1;
+
+    public override string ToString() => $"{Name} ({string.Join(", ", Columns)})";
 }
 
 /// <summary>One column, with the facts the verdict pass and the mask engine need.</summary>
