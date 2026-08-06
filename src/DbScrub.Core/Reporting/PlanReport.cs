@@ -21,7 +21,12 @@ namespace DbScrub.Core.Reporting;
 /// </summary>
 public static class PlanReport
 {
-    public static string Render(CleanPlan plan, string server, string configPath)
+    /// <param name="reviewAll">
+    /// Print every column with no rule as paste-ready JSON, however many there
+    /// are. Off by default because a real database produces thousands of lines
+    /// (DECISIONS.md D29); the summary names the same counts either way.
+    /// </param>
+    public static string Render(CleanPlan plan, string server, string configPath, bool reviewAll = false)
     {
         var builder = new StringBuilder();
 
@@ -36,7 +41,7 @@ public static class PlanReport
 
         AppendSummary(builder, plan);
         AppendProblems(builder, plan);
-        AppendUnclassified(builder, plan.Scrub);
+        AppendUnclassified(builder, plan.Scrub, reviewAll);
 
         return builder.ToString();
     }
@@ -348,7 +353,16 @@ public static class PlanReport
     /// So the heading now says what happens, the subtitle says what it costs,
     /// and the config keyword is named once so the two can still be connected.
     /// </summary>
-    private static void AppendUnclassified(StringBuilder builder, ScrubPlan plan)
+    /// <summary>
+    /// Above this many columns, summarise instead of listing. Fifty is roughly
+    /// where the paste-ready form stops being something a person reads and
+    /// starts being something they scroll past — and scrolling past is the one
+    /// outcome this block cannot afford. Below it, nothing changes: the full
+    /// listing is still the most useful thing to print.
+    /// </summary>
+    private const int SummaryThreshold = 50;
+
+    private static void AppendUnclassified(StringBuilder builder, ScrubPlan plan, bool reviewAll)
     {
         if (plan.Unclassified.Count == 0)
         {
@@ -356,17 +370,38 @@ public static class PlanReport
             return;
         }
 
-        builder.AppendLine($"Columns with no rule ({plan.Unclassified.Count}) — dbscrub will NOT touch these");
+        var tables = plan.Unclassified
+            .Select(u => u.QualifiedTable)
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+
+        var summarise = !reviewAll && plan.Unclassified.Count > SummaryThreshold;
+
+        builder.AppendLine(summarise
+            ? $"Columns with no rule ({plan.Unclassified.Count:N0} across {Count(tables, "table")})"
+                + " — dbscrub will NOT touch these"
+            : $"Columns with no rule ({plan.Unclassified.Count}) — dbscrub will NOT touch these");
         builder.AppendLine();
-        builder.AppendLine("Nobody has told dbscrub what to do with the columns below, so it leaves them");
+        builder.AppendLine("Nobody has told dbscrub what to do with these columns, so it leaves them");
         builder.AppendLine("exactly as they are. If any of them holds personal information, that");
         builder.AppendLine("information survives this run.");
         builder.AppendLine();
-        builder.AppendLine("Paste the blocks below into your config, then replace \"keep\" with a real");
-        builder.AppendLine("strategy for every column that actually holds something worth hiding.");
-        builder.AppendLine();
         builder.AppendLine("To make this stop a run instead of warning about it, set");
         builder.AppendLine("\"unclassifiedColumns\": \"fail\" in the config, or pass --fail-on-unclassified.");
+        builder.AppendLine();
+
+        if (summarise)
+        {
+            builder.Append(UnclassifiedSummary.Format(
+                plan,
+                PersonalDataHints.Describe,
+                reviewAllCommand: "dbscrub report --review-all ...   (same arguments, plus the flag)"));
+
+            return;
+        }
+
+        builder.AppendLine("Paste the blocks below into your config, then replace \"keep\" with a real");
+        builder.AppendLine("strategy for every column that actually holds something worth hiding.");
         builder.AppendLine();
         builder.Append(UnclassifiedFormatter.Format(plan));
     }

@@ -50,6 +50,7 @@ internal static class CleanCommand
         TextWriter output,
         TextWriter error,
         Func<string?> readLine,
+        bool reviewAll = false,
         TimeProvider? clock = null,
         CancellationToken cancellationToken = default)
     {
@@ -124,7 +125,7 @@ internal static class CleanCommand
 
         var plan = CleanPlan.Build(VerdictResolver.Resolve(schema, config));
 
-        output.Write(PlanReport.Render(plan, server, configPath));
+        output.Write(PlanReport.Render(plan, server, configPath, reviewAll));
         output.WriteLine();
 
         if (!plan.CanRun)

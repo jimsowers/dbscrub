@@ -29,6 +29,7 @@ internal static class ReportCommand
         Func<string, ISchemaReader> readerFactory,
         TextWriter output,
         TextWriter error,
+        bool reviewAll = false,
         CancellationToken cancellationToken = default)
     {
         MaskingConfig config;
@@ -78,7 +79,7 @@ internal static class ReportCommand
         }
 
         var plan = CleanPlan.Build(VerdictResolver.Resolve(schema, config));
-        output.Write(PlanReport.Render(plan, server, configPath));
+        output.Write(PlanReport.Render(plan, server, configPath, reviewAll));
 
         return ResolveExitCode(plan, config, error);
     }
