@@ -137,4 +137,54 @@ public static class RowDiscriminator
         keyColumns
             .Where(c => !SpliceableKeyTypes.Contains(c.DataType, StringComparer.OrdinalIgnoreCase))
             .ToList();
+
+    /// <summary>
+    /// Key column types that arrive from SQL Server as BYTES rather than as a
+    /// scalar, and so render as the name of a CLR type instead of as the row's
+    /// value (DECISIONS.md D28).
+    ///
+    /// <see cref="Text"/> formats the types it names and falls through to
+    /// Convert.ToString for the rest. That fallback is right for almost
+    /// everything — a decimal, a date and a varchar all render as themselves —
+    /// but Convert.ToString returns `value.ToString()` for anything that is not
+    /// IConvertible, and a byte array does not override ToString. The result is
+    /// the literal text `System.Byte[]`, IDENTICAL for every row.
+    ///
+    /// That is worse than it sounds. A constant discriminator makes every
+    /// generated address the same, which breaks the one promise `email` makes,
+    /// and the verify gate does not catch it: `fakeemailSystem.Byte[]@notreal.
+    /// invalid` fails the email pattern (the character before the '@' is ']',
+    /// which no local part may contain), so it is never even a candidate. The
+    /// run passes verify and earns a stamp with every row holding one broken
+    /// address.
+    ///
+    /// A DENYLIST here, where <see cref="SpliceableKeyTypes"/> is an allowlist,
+    /// because the questions differ. Splicing needs a proof about the text's
+    /// alphabet, and few types can give one. This needs only to exclude the
+    /// types that do not render a value at all, and they can be named — so
+    /// `email` keeps working with the varchar and GUID keys that suit it.
+    /// </summary>
+    private static readonly string[] UnrenderableKeyTypes =
+    [
+        "binary", "varbinary", "image", "timestamp", "rowversion",
+
+        // CLR user-defined types. dbscrub does not load their assemblies, so the
+        // driver hands these back as bytes too.
+        "hierarchyid", "geography", "geometry",
+    ];
+
+    /// <summary>
+    /// Whether a key built from these columns renders as the row's VALUE — the
+    /// minimum any per-row strategy needs, since a key that renders the same for
+    /// every row identifies none of them.
+    /// </summary>
+    public static bool CanRender(IReadOnlyList<SchemaColumn> keyColumns) =>
+        keyColumns.Count > 0 && keyColumns.All(c =>
+            !UnrenderableKeyTypes.Contains(c.DataType, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>The key columns that are the reason <see cref="CanRender"/> said no.</summary>
+    public static IReadOnlyList<SchemaColumn> UnrenderableKeyColumns(IReadOnlyList<SchemaColumn> keyColumns) =>
+        keyColumns
+            .Where(c => UnrenderableKeyTypes.Contains(c.DataType, StringComparer.OrdinalIgnoreCase))
+            .ToList();
 }

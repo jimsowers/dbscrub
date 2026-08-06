@@ -146,7 +146,8 @@ public static class MaskPlanner
                 }
 
                 if (!RequireKey(table, column, "\"email\"",
-                        "give every row a different address", path, problems))
+                        "give every row a different address", path, problems)
+                    || !RequireRenderableKey(table, column, "\"email\"", path, problems))
                 {
                     return null;
                 }
@@ -296,6 +297,48 @@ public static class MaskPlanner
             $"To {purpose}, dbscrub seeds each row's value from its primary key — and this table has "
             + "none, so there is nothing to seed from. Add a primary key, or use a strategy that "
             + "writes the same value everywhere (\"static\", \"null\")."));
+
+        return false;
+    }
+
+    /// <summary>
+    /// Refuses any per-row strategy on a table whose key does not render as the
+    /// row's value (DECISIONS.md D28).
+    ///
+    /// A `binary` key arrives as a byte array, which renders as the text
+    /// `System.Byte[]` — the same for every row. Every generated address would
+    /// then be identical, which is exactly what this strategy exists not to do,
+    /// and the verify gate would not notice: the resulting value does not match
+    /// the email pattern, so it is never inspected. The run would pass and earn
+    /// a stamp with one broken address in every row.
+    ///
+    /// Checked before the width check, because a key that identifies nothing is
+    /// a more fundamental problem than a column that is too narrow, and one
+    /// mistake should produce one error.
+    /// </summary>
+    private static bool RequireRenderableKey(
+        SchemaTable table,
+        SchemaColumn column,
+        string what,
+        string path,
+        List<ConfigError> problems)
+    {
+        if (RowDiscriminator.CanRender(table.KeyColumns))
+        {
+            return true;
+        }
+
+        var offending = RowDiscriminator.UnrenderableKeyColumns(table.KeyColumns)
+            .Select(c => $"{c.Name} ({c.DataType})");
+
+        problems.Add(Problem(
+            path,
+            $"{table.QualifiedName}.{column.Name} uses {what}, but the primary key includes "
+            + $"{string.Join(", ", offending)}, which dbscrub reads as bytes rather than as a value.",
+            "A key of this type gives dbscrub nothing to tell one row from another, so every row would "
+            + "be masked to the SAME value — and on a column that has to be unique, that fails the run "
+            + "partway through. Use \"static\" or \"null\", which write one value everywhere on purpose, "
+            + "or key the table on a column dbscrub can read."));
 
         return false;
     }
