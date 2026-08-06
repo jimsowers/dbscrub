@@ -797,6 +797,42 @@ recognises the DOMAIN and never has to parse the key at all.
 3. **Document the limit and move on.** Rejected: D27 was in the middle of
    allowing this strategy precisely because it promised distinct values.
 
+### The same fallback breaks `email` on a binary key
+
+Chasing the two requirements above turned up a third, on the other side of the
+discriminator. `RowDiscriminator.Text` formats the types it names and falls
+through to `Convert.ToString` for the rest. That fallback is right for almost
+everything — a decimal, a date and a varchar all render as themselves — but
+`Convert.ToString` returns `value.ToString()` for anything that is not
+`IConvertible`, and a byte array does not override `ToString`. A `binary` or
+`varbinary` key therefore renders as the literal text `System.Byte[]`, the same
+for every row.
+
+Every generated address in the table would then be identical, which is the one
+thing `email` exists not to do. **And the verify gate would not catch it.** The
+value is `fakeemailSystem.Byte[]@notreal.invalid`, which does not match the email
+pattern at all — the character before the `@` is `]`, which no local part may
+contain — so it is never even a candidate for inspection. The run passes verify
+and earns a stamp with one broken address in every row. It also quietly
+undercuts D27, which lets `email` through on a unique column precisely because
+it varies per row.
+
+So a per-row strategy now also requires a key that renders as a VALUE, and
+`binary`, `varbinary`, `image`, `timestamp`, `rowversion` and the CLR
+user-defined types are refused at plan time.
+
+That check is a DENYLIST where the splice check is an allowlist, because the two
+ask different questions. Splicing needs a proof about the text's alphabet, and
+few types can give one. This needs only to exclude the types that render no
+value at all, and those can be named — which keeps `email` working with the
+varchar and GUID keys that suit it and that `unique` gives up.
+
+Binary keys are rare and mostly arrive by migration: a MySQL `BINARY(16)` UUID
+carried across, an Active Directory `objectSid`, a hash used as a natural key.
+Rare enough not to deserve a fixture — a unit test with a `varbinary` key column
+covers it — and not rare enough to leave, because the failure mode is wrong data
+marked clean.
+
 ### Consequence for verify
 
 `Scrambler.LooksScrambledWithKey` no longer has to guess where the key begins. It

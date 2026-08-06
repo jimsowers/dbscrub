@@ -5,7 +5,7 @@ sweeps it, and marks it clean only if the sweep comes back empty. Steps 1–5 ar
 done, less rename and orphaned-user repair, which are deferred indefinitely
 (DECISIONS.md D25).
 
-414 unit tests, 0 warnings (warnings are errors).
+421 unit tests, 0 warnings (warnings are errors).
 
 ## The local environment
 
@@ -66,13 +66,10 @@ All by hand, on SQL Server 2025, `localhost\MSSQLSERVER02`.
 - **A filtered unique index** has never reached the inventory. D27 treats one
   like any other, which is conservative and may refuse a `null` strategy that
   would in fact have been legal under a `WHERE col IS NOT NULL` filter.
-- **`email` on a table with a `binary`/`varbinary` primary key** would give
-  every row the SAME address — `Convert.ToString` on a byte array returns
-  `System.Byte[]`, not the value, so the discriminator is a constant. Found
-  while writing D28 and NOT fixed: `scramble`+`unique` is already refused on such
-  a key by D28's allowlist, but `email` accepts any key type. A few lines beside
-  `RowDiscriminator.CanSplice`, and it needs its own predicate rather than that
-  one — `email` legitimately works with keys D28 refuses.
+- **A key type that reads as bytes has never reached SQL Server.** `binary`,
+  `varbinary` and the CLR user-defined types are refused at plan time (D28) and
+  unit-tested, with no fixture — building a binary-keyed table would cost more
+  than the bug is worth.
 - **The live-SQL integration tier does not exist** (CLAUDE.md "Testing tiers").
   Everything above was run by hand.
 
@@ -146,7 +143,9 @@ All in `docs/DECISIONS.md` with the rejected alternatives.
   filtered indexes are refused on the same terms rather than reasoned about.
 - **D28** — the row key is spliced behind a `#` delimiter. Plain concatenation
   was ambiguous — a scrambled digit is a `9` and so is a key digit — and
-  produced duplicate values on ~2% of digit-bearing rows.
+  produced duplicate values on ~2% of digit-bearing rows. Also: a per-row
+  strategy now requires a key that renders as a value, because a `binary` key
+  reads as `System.Byte[]` for every row and verify would not have caught it.
 
 ## Bugs found in earlier steps, all fixed
 
@@ -190,16 +189,15 @@ asking what the verify gate thinks of it afterwards.
 > before writing any code.
 >
 > v0 is done: `dbscrub clean` masks a database, verifies every string column,
-> and stamps it only if that sweep is clean. 414 tests pass.
+> and stamps it only if that sweep is clean. 421 tests pass.
 >
 > The whole pipeline is now proven against the live fixture — stamp, `email`,
 > `scramble`+`unique`, multi-batch walks and a composite key — so "VERIFIED
 > against the live database" in HANDOFF.md is the short list and "NOT verified"
 > is the one to read.
 >
-> "What is left" lists the work in the order I would do it. The one real bug
-> named in "NOT verified" is `email` on a binary primary key, which would give
-> every row the same address; it is a few lines and has no fixture.
+> "What is left" lists the work in the order I would do it, and none of it is a
+> known bug.
 >
 > The bigger lever is not code: `config/aavsb.masking.json` still does not
 > exist, and the tool has nothing to be useful on until it does.

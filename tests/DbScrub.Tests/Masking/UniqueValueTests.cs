@@ -180,6 +180,56 @@ public class UniqueValueTests
         }
     }
 
+    [Theory]
+    [InlineData("varbinary")]
+    [InlineData("binary")]
+    [InlineData("rowversion")]
+    public void AKeyThatReadsAsBytesIsRefusedForEmail(string keyType)
+    {
+        // Convert.ToString on a byte array returns the TYPE NAME, "System.Byte[]",
+        // identical for every row — so every address would be the same, and the
+        // verify gate would not catch it, because the resulting value does not
+        // match the email pattern and is therefore never inspected. It would
+        // pass, and be stamped.
+        var schema = SchemaBuilder.Database()
+            .Table("dbo.Person", SchemaBuilder.NotNull("Id", keyType),
+                new SchemaColumn("Email", "nvarchar", IsNullable: true, MaxLength: 512,
+                    IsComputed: false, IsIdentity: false))
+            .WithPrimaryKey("Id")
+            .Build();
+
+        var plan = Plan(schema,
+            """{ "name": "dbo.Person", "columns": [ { "name": "Email", "strategy": "email" } ] }""");
+
+        Assert.False(plan.CanRun);
+
+        var problem = Assert.Single(plan.Problems);
+        Assert.Contains($"Id ({keyType})", problem.Message);
+        Assert.Contains("bytes rather than as a value", problem.Message);
+    }
+
+    [Fact]
+    public void EveryKeyThatCanBeSplicedCanAlsoBeRendered()
+    {
+        // The two checks guard different things — one the text's alphabet, the
+        // other whether there is a value at all — and `email` uses only the
+        // second, so it accepts keys `unique` refuses. What must never happen is
+        // the reverse: a key good enough to splice but not good enough to read.
+        foreach (var keyType in new[] { "tinyint", "smallint", "int", "bigint" })
+        {
+            var key = new[] { SchemaBuilder.NotNull("Id", keyType) };
+
+            Assert.True(RowDiscriminator.CanSplice(key), keyType);
+            Assert.True(RowDiscriminator.CanRender(key), keyType);
+        }
+
+        // And the keys email keeps that unique gives up.
+        var guid = new[] { SchemaBuilder.NotNull("Id", "uniqueidentifier") };
+
+        Assert.False(RowDiscriminator.CanSplice(guid));
+        Assert.True(RowDiscriminator.CanRender(guid));
+    }
+
     [Fact]
     public void ACompositeOfIntegersCanBeSpliced()
     {
