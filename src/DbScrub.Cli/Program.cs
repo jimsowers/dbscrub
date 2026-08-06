@@ -52,12 +52,20 @@ internal static class Program
                 + "without it the built-in localhost defaults apply.",
         };
 
+        var reviewAllOption = new Option<bool>("--review-all")
+        {
+            Description = "List every column with no rule as paste-ready JSON, however many there are. "
+                + "Without it a large database is summarised — the counts are identical either way, "
+                + "only the listing is held back.",
+        };
+
         var reportCommand = new Command("report",
-            "Read-only. Print the schema-vs-config plan and every UNCLASSIFIED column.")
+            "Read-only. Print the schema-vs-config plan and the columns with no rule.")
         {
             serverOption,
             databaseOption,
             configOption,
+            reviewAllOption,
         };
 
         reportCommand.SetAction((parseResult, cancellationToken) => ReportCommand.RunAsync(
@@ -67,6 +75,7 @@ internal static class Program
             readerFactory: connectionString => new SchemaInventory(connectionString),
             output: Console.Out,
             error: Console.Error,
+            reviewAll: parseResult.GetValue(reviewAllOption),
             cancellationToken: cancellationToken));
 
         var statusCommand = new Command("status",
@@ -113,6 +122,7 @@ internal static class Program
             yesOption,
             dryRunOption,
             failOnUnclassifiedOption,
+            reviewAllOption,
         };
 
         cleanCommand.SetAction((parseResult, cancellationToken) => CleanCommand.RunAsync(
@@ -130,6 +140,7 @@ internal static class Program
             output: Console.Out,
             error: Console.Error,
             readLine: Console.ReadLine,
+            reviewAll: parseResult.GetValue(reviewAllOption),
             cancellationToken: cancellationToken));
 
         var root = new RootCommand("dbscrub — scrub PII from a locally restored SQL Server database.")

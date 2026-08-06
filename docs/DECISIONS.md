@@ -843,6 +843,105 @@ to be scrambler output. That is strictly more precise than peeling a trailing
 digit run, and it still refuses to excuse a real value: an unmasked Social
 Security number carries no delimiter at all.
 
+## D29 — A partial pass earns its own record; the stamp keeps one meaning
+
+The first `report` against a real database — aavsb, 2026-08-06 — returned **220
+tables, 2,958 columns, 4,538 lines**. Every table printed a full paste-ready
+block. Two separate problems fell out of that one run, and they are worth holding
+apart, because only one of them can hurt anybody.
+
+### The readable-output problem
+
+The list of columns with no rule exists to say: nobody told dbscrub about these,
+so if any of them holds personal data, that data survives the run. That sentence
+is worth reading when it names forty columns. At 2,958 it is a wall, and a
+warning that always fires at that size is one people stop reading — the same
+failure the computed-column entry in `docs/HANDOFF.md` is about, at scale.
+
+Fixing this changes no rule, no config and nothing about what gets masked. It is
+presentation only, and it cannot make the tool less safe.
+
+### The partial-intent problem
+
+Most real use is not "scrub this whole database". It is "mask these five tables".
+The tool already supports that — list the tables, run in warn mode, everything
+else is reported and left alone — but the config cannot say WHY the rest is
+missing. A table left out means "undecided", and there is no way to write
+"deliberately out of scope".
+
+Table-level `keep` (already built) covers part of this: one line with a mandatory
+reason resolves a whole table, which turns 2,958 column decisions into 220 table
+decisions. That is the right tool for reference and lookup tables. It is the
+wrong tool for tables nobody has looked at, because it is a claim that you looked
+and they were clean.
+
+So partial intent is currently only expressible as an undifferentiated pile of
+warnings.
+
+### The blocker is verify, not the stamp
+
+The obvious fix is to let a partial run stamp the database with some marker
+saying it was partial. That fix does not work, and the reason is ordering.
+
+`CleanRunner` runs mask → verify → stamp, and `SqlVerifier` loops
+`foreach (var table in schema.Tables)`, checking every textual column in the
+whole database. A five-table pass masks its five tables, then verify finds real
+addresses and Social Security numbers in the other 215 and fails. **The run never
+reaches the stamp at all.** No value the stamp could carry ever gets written.
+
+### Rejected: a second value on the stamp
+
+Adding a mode to the stamp — "complete" versus "subset" — was considered directly
+and rejected.
+
+Today "is this database stamped?" has exactly one meaning: fully scrubbed and
+verified. Every reader of that signal is correct by checking one thing — `status`
+today, the read-only Guard (D11) when it is built, and any script anyone writes.
+
+Add a mode and every one of those readers becomes quietly wrong. Code asking "is
+it stamped?" would get "yes" for a database where 215 tables still hold real
+personal data. Nothing fails loudly; it just starts returning a dangerous answer,
+and every existing and future reader has to remember a second field. Adding a
+qualifier to an established signal silently changes the meaning of every place
+that already reads it.
+
+### What we do instead
+
+Two artifacts with two names, rather than one artifact with a mode.
+
+- **The stamp is unchanged.** "This whole database was scrubbed and verified."
+  Requires the full sweep. One meaning, no qualifiers, for the life of the tool.
+- **A partial pass writes a separate record.** "On this date, a targeted pass
+  covered these N tables." It never claims the database is clean, and `status`
+  reports it as what it is: not sanitized, with a partial pass on record.
+
+Nothing that reads the stamp today becomes wrong. The Guard refuses unstamped
+databases, so a partially-masked one is refused with no extra logic written.
+
+On a partial run, verify narrows to the declared scope. That is safe **here** and
+would not be safe generally: narrowed verify is no longer certifying the database,
+it is confirming the requested work actually happened. The dangerous version is
+narrowing verify *and still writing the stamp*, which is what the rejected option
+above amounts to. Narrowed verify plus no stamp has no hole in it.
+
+### Alternatives considered
+
+1. **A `--tables` filter on the command line.** Familiar and obvious. Rejected on
+   the same grounds as D17 and the allowlist's no-override rule: a flag that
+   narrows what gets masked is a flag that excuses more, and a flag gets typed in
+   anger at 6pm where a config change gets reviewed.
+2. **Table-level `keep` is enough; build nothing.** Rejected: it makes a claim
+   about tables nobody opened. Using it that way corrupts the one signal that
+   distinguishes reviewed from unreviewed.
+3. **Ship both changes together.** They touch the same rendering code and the
+   scope declaration makes the summary sharper, so combining is genuinely
+   cheaper. Rejected anyway: one change cannot alter behavior and the other
+   touches the verify-and-stamp chain, which `CleanRunner` calls the correctness
+   of the whole tool. Reviewed together, the risky half rides in on the safe
+   half. The readable output ships first, built to take its "these tables are
+   interesting" list from outside, so the scope work later feeds the same input
+   without a rewrite.
+
 ## Roadmap
 
 - **v0** (this repo, now): spec in SPEC.md.
