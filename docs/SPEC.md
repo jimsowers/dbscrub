@@ -11,13 +11,13 @@ container pipeline, fail-closed-by-default.
 
 ## 1. Tech stack
 
-- .NET 8 console app, packaged as a dotnet tool later (v0: plain console app)
+- .NET 10 console app, packaged as a dotnet tool later (v0: plain console app)
 - `System.CommandLine` for the CLI
 - `Microsoft.Data.SqlClient` for data access (no ORM)
 - Solution layout:
-  - `src/DbScrub.Core` — config model, schema inventory, diff, strategies, hygiene steps, verify, stamp/rename. net8.0. All the smarts; Cli is a thin shell.
-  - `src/DbScrub.Cli` — command wiring, console UX, exit codes. net8.0.
-  - `src/DbScrub.Guard` — READ-ONLY micro-library for consuming apps (see section 8). Multi-targets `netstandard2.0;net8.0` so legacy .NET Framework web apps (web.config era) can reference it. Depends on nothing but System.Data.SqlClient/Microsoft.Data.SqlClient. Contains zero write logic by design.
+  - `src/DbScrub.Core` — config model, schema inventory, diff, strategies, hygiene steps, verify, stamp/rename. net10.0. All the smarts; Cli is a thin shell.
+  - `src/DbScrub.Cli` — command wiring, console UX, exit codes. net10.0.
+  - `src/DbScrub.Guard` — READ-ONLY micro-library for consuming apps (see section 8). Multi-targets `netstandard2.0;net10.0` so legacy .NET Framework web apps (web.config era) can reference it. Depends on nothing but System.Data.SqlClient/Microsoft.Data.SqlClient. Contains zero write logic by design.
   - `tests/DbScrub.Tests` — unit tests (strategy logic, config parsing, diff). Integration tests via Testcontainers are a v0.x follow-up, not required to ship v0.
 
 ## 2. CLI surface

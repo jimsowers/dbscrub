@@ -61,7 +61,7 @@ that could be mistaken for real is a value that ends up in an email.
 
 ## Requirements
 
-- .NET 8 runtime (the SDK if you are building it yourself)
+- .NET 10 runtime (the SDK if you are building it yourself)
 - SQL Server 2019 or later, running locally
 - Windows authentication. `report` and `status` need only to read the database
   structure. `clean` additionally needs to write to the tables it masks, and to
@@ -84,7 +84,7 @@ dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyD
 ```
 
 ```bash
-src\DbScrub.Cli\bin\Debug\net8.0\dbscrub.exe report --server localhost --database MyDb --config my-config.json
+src\DbScrub.Cli\bin\Debug\net10.0\dbscrub.exe report --server localhost --database MyDb --config my-config.json
 ```
 
 All commands assume you are in the repo root.
