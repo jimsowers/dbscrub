@@ -266,11 +266,13 @@ footer p { margin: 0 0 .4rem; }
   <p class="part-sub">From nothing installed to a masked database. Assumes no prior knowledge of this tool. Steps 7, 9 and 11 only ever read — run them as often as you like while you get the config right.</p>
 
   <div class="callout">
-    <h4>How you actually run dbscrub</h4>
-    <p><strong>There is no <code class="inline">dbscrub</code> command yet.</strong> It is not installed onto your system and it is not on your PATH. Every command in this guide is run through the .NET toolchain, from the folder you cloned into:</p>
-    <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb --config my-config.json</code></pre></div>
-    <p>The bare <code class="inline">--</code> in the middle matters. Everything before it is for the <code class="inline">dotnet</code> command; everything after it is passed to dbscrub. Leave it out and <code class="inline">dotnet</code> will try to interpret <code class="inline">--server</code> as its own option and fail.</p>
-    <p><strong>Run every command below from the repository root</strong> — the folder containing <code class="inline">DbScrub.sln</code>. Not from <code class="inline">src</code>, not from <code class="inline">bin</code>.</p>
+    <h4>How you run dbscrub</h4>
+    <p>dbscrub is not installed onto your system and is not on your PATH. Instead the repository ships a small launcher at its root. <strong>Run it from the repository root</strong> — the folder containing <code class="inline">DbScrub.sln</code>:</p>
+    <div class="code"><pre><code>.\dbscrub report --server localhost --database MyDb --config my-config.json</code></pre></div>
+    <p>The leading <code class="inline">.\</code> is PowerShell's way of saying “the file here in this folder”, and PowerShell requires it. In the older <code class="inline">cmd</code> prompt, drop it and just type <code class="inline">dbscrub …</code>.</p>
+    <p>The launcher is a two-line script that forwards everything to the .NET toolchain. You can bypass it if you prefer, but note the bare <code class="inline">--</code>, which is easy to lose:</p>
+    <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb</code></pre></div>
+    <p>Everything before that <code class="inline">--</code> belongs to <code class="inline">dotnet</code>; everything after it goes to dbscrub. Type <code class="inline">--report</code> instead of <code class="inline">-- report</code> — one missing space — and you get a screenful of “Unrecognized command or argument”. That trap is the whole reason the launcher exists.</p>
   </div>
 
   <ol class="steps">
@@ -336,7 +338,7 @@ cd dbscrub</code></pre></div>
       <div class="step-head"><h4>Ask what would happen</h4><span class="pill safe">Read only</span></div>
       <p>Reads your database, compares it to your config, and prints the plan: which tables get emptied, which columns get masked and how, and every column it has no rule for. <strong>Changes nothing</strong>, so run it as often as you like.</p>
       <p>Use your own server name and database name:</p>
-      <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- report --server localhost --database DbScrubTest --config config/mydb.masking.json</code></pre></div>
+      <div class="code"><pre><code>.\dbscrub report --server localhost --database DbScrubTest --config config/mydb.masking.json</code></pre></div>
       <p>On a large database the list of unruled columns is summarised rather than printed in full. Add <code class="inline">--review-all</code> to see every one of them.</p>
     </li>
 
@@ -352,14 +354,14 @@ cd dbscrub</code></pre></div>
       <span class="num">9</span>
       <div class="step-head"><h4>Dry run</h4><span class="pill safe">Read only</span></div>
       <p>The same plan, but reached through <code class="inline">clean</code>'s own safety checks — so it also proves the server allowlist and your config would let a real run start. Never prompts, so it is safe inside a script.</p>
-      <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- clean --server localhost --database DbScrubTest --config config/mydb.masking.json --dry-run</code></pre></div>
+      <div class="code"><pre><code>.\dbscrub clean --server localhost --database DbScrubTest --config config/mydb.masking.json --dry-run</code></pre></div>
     </li>
 
     <li class="step danger">
       <span class="num">10</span>
       <div class="step-head"><h4>Clean it</h4><span class="pill danger">Modifies data</span></div>
       <p>The same command <strong>without</strong> <code class="inline">--dry-run</code>. It prints the plan, then asks you to type the database name exactly before it changes anything.</p>
-      <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- clean --server localhost --database DbScrubTest --config config/mydb.masking.json</code></pre></div>
+      <div class="code"><pre><code>.\dbscrub clean --server localhost --database DbScrubTest --config config/mydb.masking.json</code></pre></div>
       <p>Add <code class="inline">--yes</code> to skip the typed confirmation — allowed only on <code class="inline">localhost</code>, <code class="inline">.</code> or <code class="inline">127.0.0.1</code>. Add <code class="inline">--fail-on-unclassified</code> to refuse to run while any column still has no rule. There is deliberately no flag that loosens anything.</p>
     </li>
 
@@ -367,7 +369,7 @@ cd dbscrub</code></pre></div>
       <span class="num">11</span>
       <div class="step-head"><h4>Check it</h4><span class="pill safe">Read only</span></div>
       <p>Answers “has this database been cleaned?” so a script or build step can branch on the exit code. <code class="inline">clean</code> already ran the verification sweep and wrote the mark; this is the independent second opinion.</p>
-      <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- status --server localhost --database DbScrubTest --config config/mydb.masking.json</code></pre></div>
+      <div class="code"><pre><code>.\dbscrub status --server localhost --database DbScrubTest --config config/mydb.masking.json</code></pre></div>
       <p><code class="inline">--config</code> is optional here and is read only for the allowed-servers list — but <strong>you need it if your SQL Server is a named instance</strong>, because without it only the built-in defaults apply and those cover default instances only.</p>
     </li>
 
@@ -409,8 +411,12 @@ cd dbscrub</code></pre></div>
           <td>You are in the wrong folder. Run from the repository root — the one containing <code class="inline">DbScrub.sln</code>.</td>
         </tr>
         <tr>
-          <td>Unrecognised option, or <code class="inline">--server</code> rejected</td>
-          <td>The bare <code class="inline">--</code> is missing between <code class="inline">--project src/DbScrub.Cli</code> and the dbscrub command.</td>
+          <td>A wall of <code class="inline">Unrecognized command or argument</code></td>
+          <td>You used the raw <code class="inline">dotnet run</code> form and lost the space in the bare <code class="inline">--</code>, so it read as <code class="inline">--report</code>. Use <code class="inline">.\dbscrub report …</code> instead and the problem cannot happen.</td>
+        </tr>
+        <tr>
+          <td><code class="inline">dbscrub is not recognized…</code></td>
+          <td>In PowerShell you need the leading <code class="inline">.\</code> — write <code class="inline">.\dbscrub</code>, not <code class="inline">dbscrub</code>. In <code class="inline">cmd</code> it is the other way round.</td>
         </tr>
       </tbody>
     </table>
