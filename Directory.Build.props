@@ -7,9 +7,10 @@
     target framework or turn a warning into an error.
   -->
   <PropertyGroup>
-    <!-- SPEC section 1: net8.0. The machine has SDK 10 installed, which can
-         target net8.0 fine; the 8.0 runtime is present so the output runs. -->
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- SPEC section 1: net10.0, per DECISIONS.md D30. .NET 8 leaves support in
+         November 2026; 10 is the current long-term release and runs to 2028.
+         The machine has the 10 SDK and runtime, and no 8 SDK at all. -->
+    <TargetFramework>net10.0</TargetFramework>
 
     <!-- CLAUDE.md conventions -->
     <Nullable>enable</Nullable>

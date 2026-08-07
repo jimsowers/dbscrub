@@ -1,7 +1,7 @@
 # CLAUDE.md — working agreement for this repo
 
 ## What this is
-DbScrub: a .NET 8 console tool that scrubs PII from a locally restored SQL
+DbScrub: a .NET 10 console tool that scrubs PII from a locally restored SQL
 Server database (in-place, v0), so daily dev and AI-assisted work never touch
 real personal data. `docs/SPEC.md` is the authoritative spec; `docs/DECISIONS.md`
 explains why and holds the roadmap. Read both before proposing changes.
@@ -13,7 +13,7 @@ explains why and holds the roadmap. Read both before proposing changes.
   + `status` command, (3) hygiene steps (CDC/temporal/truncate), (4) mask
   engine with the four strategies + `clean` wiring the above together,
   (5) verify gate + stamp WRITING,
-  (6) DbScrub.Guard micro-library (netstandard2.0;net8.0, READ-ONLY - see SPEC section 8 and DECISIONS D11). Don't jump ahead. Step 6 is DEFERRED: build it only when the repo owner explicitly asks. Make NO changes to aavsb.sln, its web.config, or any consuming application - the aavsb target framework is .NET Framework 4.8, recorded here for when step 6 eventually starts.
+  (6) DbScrub.Guard micro-library (netstandard2.0;net10.0, READ-ONLY - see SPEC section 8 and DECISIONS D11). Don't jump ahead. Step 6 is DEFERRED: build it only when the repo owner explicitly asks. Make NO changes to aavsb.sln, its web.config, or any consuming application - the aavsb target framework is .NET Framework 4.8, recorded here for when step 6 eventually starts.
   The stamp splits across two steps — step 2 reads it (to refuse an
   already-clean database), step 5 writes it (once verify has earned it).
 - Rename and orphaned-user repair are DEFERRED INDEFINITELY (DECISIONS.md D25).
@@ -46,7 +46,7 @@ explains why and holds the roadmap. Read both before proposing changes.
   All versions live in Directory.Packages.props so the list stays auditable.
 
 ## Conventions
-- .NET 8, nullable enabled, implicit usings, file-scoped namespaces.
+- .NET 10, nullable enabled, implicit usings, file-scoped namespaces.
 - No ORM. Parameterized SQL only; identifiers quoted via QUOTENAME-style
   helper (table/column names come from config = user input).
 - Projects: src/DbScrub.Core, src/DbScrub.Cli, tests/DbScrub.Tests.

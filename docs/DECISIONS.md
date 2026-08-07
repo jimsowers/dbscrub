@@ -100,8 +100,8 @@ its own credentials and connection string, bypassing the allowlist check
 and typed confirmation entirely. One bad transform = the product destroys
 production. Also: Application_Start is a terrible host for long destructive
 work (IIS recycles mid-scrub = half-masked DB), and .NET Framework can't
-reference net8.0 anyway.
-Resolution: `DbScrub.Guard` (netstandard2.0;net8.0), read-only by hard rule —
+reference net10.0 anyway.
+Resolution: `DbScrub.Guard` (netstandard2.0;net10.0), read-only by hard rule —
 checks the stamp, throws/warns in dev when `RequireSanitizedDb` is true.
 Fail-safe polarity: flag absent everywhere by default, true only in dev
 configs, so transform mistakes produce a missing check, never a destructive
@@ -941,6 +941,58 @@ above amounts to. Narrowed verify plus no stamp has no hole in it.
    half. The readable output ships first, built to take its "these tables are
    interesting" list from outside, so the scope work later feeds the same input
    without a rewrite.
+
+## D30 — net10.0, because net8.0 was an assumption nobody ever argued
+
+The repo targeted `net8.0` from the first commit. Nothing in this file explains
+why, and nothing ever did — SPEC section 1 stated it and `CLAUDE.md` repeated it
+as a convention. It was a starting assumption that survived because it kept
+working.
+
+It kept working for a specific and slightly misleading reason: the dev machine
+has SDK 9 and SDK 10 and **no .NET 8 SDK at all**. A newer SDK builds an older
+target happily, and the 8.0 runtime happened to be installed, so the output ran.
+Every build was green and nobody had cause to look.
+
+**Why it changed:** .NET 8 is a long-term release and its support ends on
+**10 November 2026** — 95 days after this was written. .NET 10 is also long-term
+and runs to **14 November 2028**. Dates confirmed against Microsoft's published
+support policy rather than recalled. Staying on 8 meant a forced migration
+within months, done under time pressure, instead of a one-line change made
+deliberately.
+
+The cost was one line in `Directory.Build.props` plus the assertion in
+`ScaffoldingTests` that pins the target. Neither dependency — Microsoft.Data.
+SqlClient or xunit — needed touching.
+
+`DbScrub.Guard` (D11) now multi-targets `netstandard2.0;net10.0`. The
+`netstandard2.0` leg is the load-bearing one and is unchanged: it exists so a
+.NET Framework 4.8 application can reference the guard at all, and no modern
+target can do that job.
+
+### Why the framework target has a test
+
+`ScaffoldingTests.CoreAndCliTargetTheFrameworkTheSpecAsksFor` asserts the target
+framework rather than trusting the build file. A retarget is a one-line edit that
+still compiles and still passes every other test — the cost only shows up later,
+on a machine whose installed runtime does not match. This decision is exactly the
+case that test was written for, and updating the assertion was the deliberate
+acknowledgement the design intends.
+
+### Alternatives considered
+
+1. **Stay on net8.0 until support actually lapses.** Rejected: it converts a
+   two-minute change into an urgent one, scheduled by Microsoft rather than by
+   us, and the machine cannot even build for 8 without the runtime that happens
+   to be lying around.
+2. **Move to net9.0.** Rejected: .NET 9 is a standard-term release and its
+   support ends on **10 November 2026 — the same day as .NET 8's**. It is a
+   migration that buys nothing and would have to be done again immediately.
+3. **Multi-target `net8.0;net10.0`.** Rejected as unearned complexity. This is a
+   local developer tool run on machines we control, not a library with unknown
+   consumers. Multi-targeting doubles the build and the test matrix to serve a
+   consumer that does not exist. `DbScrub.Guard` multi-targets because it has a
+   real .NET Framework consumer; nothing else here does.
 
 ## Roadmap
 

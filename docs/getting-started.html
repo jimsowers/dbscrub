@@ -245,7 +245,7 @@ footer p { margin: 0 0 .4rem; }
   <h1>DbScrub</h1>
   <p class="tagline">Replace real personal data in a locally restored SQL&nbsp;Server database with obvious fakes — so daily development never touches real people's information.</p>
   <div class="facts">
-    <span class="fact">.NET 8</span>
+    <span class="fact">.NET 10</span>
     <span class="fact">SQL Server 2019+</span>
     <span class="fact">localhost only</span>
     <span class="fact">no ORM</span>
@@ -270,7 +270,7 @@ footer p { margin: 0 0 .4rem; }
     <li class="step">
       <span class="num">1</span>
       <div class="step-head"><h4>Build it</h4></div>
-      <p>You need the .NET 8 runtime and a SQL Server running on your own machine, using Windows authentication. <code class="inline">report</code> and <code class="inline">status</code> only need to read the database structure; <code class="inline">clean</code> also writes to the tables it masks and runs <code class="inline">ALTER DATABASE</code> and <code class="inline">ALTER TABLE</code> — in practice, <code class="inline">db_owner</code> on the copy.</p>
+      <p>You need the .NET 10 runtime and a SQL Server running on your own machine, using Windows authentication. <code class="inline">report</code> and <code class="inline">status</code> only need to read the database structure; <code class="inline">clean</code> also writes to the tables it masks and runs <code class="inline">ALTER DATABASE</code> and <code class="inline">ALTER TABLE</code> — in practice, <code class="inline">db_owner</code> on the copy.</p>
       <div class="code"><pre><code>dotnet build</code></pre></div>
     </li>
 
@@ -334,7 +334,7 @@ footer p { margin: 0 0 .4rem; }
     <h4>Running it without installing anything</h4>
     <p>Every <code class="inline">dbscrub</code> above can be run straight from the repo as
     <code class="inline">dotnet run --project src/DbScrub.Cli -- report --server …</code>, or from the build output at
-    <code class="inline">src\DbScrub.Cli\bin\Debug\net8.0\dbscrub.exe</code>.</p>
+    <code class="inline">src\DbScrub.Cli\bin\Debug\net10.0\dbscrub.exe</code>.</p>
   </div>
 </section>
 

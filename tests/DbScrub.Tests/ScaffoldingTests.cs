@@ -21,15 +21,16 @@ public class ScaffoldingTests
     [Fact]
     public void CoreAndCliTargetTheFrameworkTheSpecAsksFor()
     {
-        // SPEC section 1 pins net8.0. The dev machine only has SDK 9 and 10, so
-        // an accidental retarget to net10.0 would still build here and then fail
-        // on a machine with just the 8.0 runtime. Assert the intent instead.
+        // SPEC section 1 pins net10.0 (DECISIONS.md D30). The target is asserted
+        // rather than assumed because a retarget is a one-line edit that still
+        // builds and still passes every other test — the cost only appears on a
+        // machine whose runtime does not match, long after the change.
         var core = typeof(Core.AssemblyMarker).Assembly;
         var framework = core.GetCustomAttributes(
             typeof(System.Runtime.Versioning.TargetFrameworkAttribute), false);
 
         var attribute = Assert.Single(framework);
-        Assert.Equal(".NETCoreApp,Version=v8.0",
+        Assert.Equal(".NETCoreApp,Version=v10.0",
             ((System.Runtime.Versioning.TargetFrameworkAttribute)attribute).FrameworkName);
     }
 }

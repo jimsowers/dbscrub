@@ -13,8 +13,9 @@ done, less rename and orphaned-user repair, which are deferred indefinitely
   **`localhost\MSSQLSERVER02`**. There is NO default instance, so a bare
   `localhost` will not connect.
 - `sqlcmd` 16.0 on PATH.
-- .NET SDK 9 and 10; **no .NET 8 SDK**. The 8.0.28 runtime is present, so
-  net8.0 output runs. A test asserts the target framework.
+- .NET SDK 9 and 10 — no .NET 8 SDK at all. The projects target **net10.0**
+  (DECISIONS.md D30); a test asserts the target framework so a retarget cannot
+  happen by accident.
 - Fixture database `DbScrubTest`:
   `sqlcmd -S "localhost\MSSQLSERVER02" -E -i scripts\create-test-db.sql`
   It drops and recreates, so it is the way back to a known state.
