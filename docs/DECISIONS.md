@@ -994,6 +994,88 @@ acknowledgement the design intends.
    consumer that does not exist. `DbScrub.Guard` multi-targets because it has a
    real .NET Framework consumer; nothing else here does.
 
+## D31 — Progress is reported inline, because `Progress<T>` is asynchronous
+
+Found while chasing an intermittent test failure during the net10.0 retarget
+(D30). Worth recording in full, because the bug was invisible, the first two
+explanations were wrong, and the fix is a type nobody would think to question.
+
+### The symptom
+
+`CleanCommandTests` failed at roughly 4% of full-suite runs, on a DIFFERENT test
+each time, always passing when run alone and never reproducing with a logger
+attached.
+
+### Two wrong answers first
+
+**"It is the net10.0 retarget."** A 6-run control on net8.0 came back clean and
+appeared to confirm it. It did not: at a 4% rate, 6 clean runs happen ~78% of
+the time by chance. Matched 30-run samples gave **1 failure on each target** —
+identical rates, and the retarget exonerated. A control has to be big enough to
+see the thing it is controlling for.
+
+**"A virus scanner locks the temp file."** The tests write a config to the shared
+temp folder and the code under test opens it immediately, which fits perfectly.
+A throwaway probe ran that exact write-then-read cycle 24,000 times across both
+frameworks: zero failures. Wrong.
+
+### The actual cause
+
+Captured on the ~21st run of a loop, with no logger attached:
+
+    System.ArgumentOutOfRangeException : ... (Parameter 'chunkLength')
+       at System.Text.StringBuilder.ToString()
+       at CleanCommandTests.RunAsync(...)
+
+`StringBuilder.ToString()` throwing on `chunkLength` is what happens when one
+thread appends while another reads. `StringBuilder` is not thread-safe.
+
+The writer was `new Progress<string>(message => output.WriteLine(...))`.
+**`Progress<T>` delivers callbacks asynchronously.** It captures the
+`SynchronizationContext` at construction and posts to it; a console application
+and a test host have none, so it falls back to the thread pool. `Report` queues
+the write and returns before it has happened. So `clean` finished, the command
+returned, the test read the writer — and a queued callback was still writing to
+it.
+
+That explains every symptom: it lives in the shared test helper so any test can
+hit it, it needs a run that actually emits progress, and isolation or logging
+shift the timing enough to hide it.
+
+### Why this is a product bug, not a test bug
+
+The tempting fix is to drain the callbacks in the test. That would fix the test
+and leave the real defect: **in the CLI, progress lines can print out of order,
+or after the line they were meant to precede.** "Masking dbo.Person" can land
+after "Verify passed — writing the stamp".
+
+The console transcript is what an operator reads before approving a destructive
+run. Output that misrepresents the order of events is worse than no output.
+
+`Progress<T>` exists to marshal callbacks onto a UI thread. There is no UI
+thread here, so all it contributes is latency and a race.
+
+`InlineProgress<T>` invokes the handler on the calling thread, immediately.
+Both `CleanCommand` and `CleanRunner` use it. After the change: 60 consecutive
+clean full-suite runs.
+
+Sixty clean runs is not by itself proof — at a 4% rate that happens ~7% of the
+time by luck. The confidence comes from having a mechanism that accounts for
+every observed symptom, plus a clean sample, not from the sample alone.
+`InlineProgressTests` asserts the property directly so a revert to
+`Progress<T>` fails loudly instead of returning as a 4% flake.
+
+### Alternatives considered
+
+1. **Wait for the callbacks to drain in the test.** Rejected: fixes the symptom
+   where it is visible and leaves the out-of-order console output, which is the
+   half that affects real runs.
+2. **Lock around the writer.** Rejected: makes the race safe without making the
+   ordering correct, and puts a lock in the hot path of every progress line to
+   work around a type that should not be there.
+3. **Drop progress reporting from `CleanRunner`.** Rejected: on a large table
+   the row-count callbacks are the only sign the run has not hung.
+
 ## Roadmap
 
 - **v0** (this repo, now): spec in SPEC.md.

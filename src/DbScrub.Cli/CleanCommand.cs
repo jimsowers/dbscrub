@@ -184,7 +184,7 @@ internal static class CleanCommand
                 session,
                 verifierFactory(connectionString),
                 stampWriterFactory(connectionString),
-                new Progress<string>(message => output.WriteLine($"  {message}")),
+                new InlineProgress<string>(message => output.WriteLine($"  {message}")),
                 cancellationToken);
         }
 
