@@ -6,9 +6,10 @@ AI tool — never touches real people's information.
 
 ### 📄 New here? Start with the one-page guide
 
-**[docs/getting-started.html](docs/getting-started.html)** — how to run it in eight
-steps, and how the code works, with class names. Everything a new developer
-needs, on one page.
+**[docs/getting-started.html](docs/getting-started.html)** — eleven steps from
+`git clone` to a masked database, then how the code works, with class names.
+Assumes no prior knowledge of this tool. Everything a new developer needs, on
+one page.
 
 **Read it here:** https://jimsowers.github.io/dbscrub/
 
@@ -77,16 +78,29 @@ cd dbscrub
 dotnet build
 ```
 
-**There is no `dbscrub` command.** It is not installed and not on your PATH.
-Every example below is run through the .NET toolchain, from the repository root
-— the folder containing `DbScrub.sln`:
+dbscrub is not installed onto your system and is not on your PATH. The
+repository ships a small launcher at its root instead. **Run it from the
+repository root** — the folder containing `DbScrub.sln`:
 
 ```bash
-dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb --config my-config.json
+.\dbscrub report --server localhost --database MyDb --config my-config.json
 ```
 
-The bare `--` matters: everything before it is for `dotnet`, everything after it
-goes to dbscrub. Omit it and `dotnet` tries to interpret `--server` itself.
+The leading `.\` is PowerShell's way of saying "the file here in this folder",
+and PowerShell requires it. In the older `cmd` prompt, drop it and type
+`dbscrub …`.
+
+The launcher just forwards to the .NET toolchain. You can bypass it, but mind
+the bare `--`:
+
+```bash
+dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb
+```
+
+Everything before that `--` belongs to `dotnet`; everything after it goes to
+dbscrub. Write `--report` instead of `-- report` — one missing space — and you
+get a screenful of "Unrecognized command or argument". That trap is why the
+launcher exists.
 
 ## Find your SQL Server's exact name
 
@@ -129,7 +143,7 @@ Open your copy and change **one line** — put your server name from above into
 **2. Ask what it would do.** This only reads, so run it as often as you like:
 
 ```bash
-dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb --config config/mydb.masking.json
+.\dbscrub report --server localhost --database MyDb --config config/mydb.masking.json
 ```
 
 **3. Paste the answer back.** The report ends with every column nobody has
@@ -145,20 +159,20 @@ the list is summarised; add `--review-all` for every line of it.
 so it also proves a real run would be allowed to start. Still changes nothing:
 
 ```bash
-dotnet run --project src/DbScrub.Cli -- clean --server localhost --database MyDb --config config/mydb.masking.json --dry-run
+.\dbscrub clean --server localhost --database MyDb --config config/mydb.masking.json --dry-run
 ```
 
 **5. Run it.** The same command **without** `--dry-run`. It prints the plan, then
 asks you to type the database name before it touches anything:
 
 ```bash
-dotnet run --project src/DbScrub.Cli -- clean --server localhost --database MyDb --config config/mydb.masking.json
+.\dbscrub clean --server localhost --database MyDb --config config/mydb.masking.json
 ```
 
 **6. Confirm.** Exit code `0` means the copy is clean, `2` means it is not:
 
 ```bash
-dotnet run --project src/DbScrub.Cli -- status --server localhost --database MyDb --config config/mydb.masking.json
+.\dbscrub status --server localhost --database MyDb --config config/mydb.masking.json
 ```
 
 `--config` is optional for `status` and is read only for the allowed-servers
@@ -173,15 +187,12 @@ history needs special handling, and what the verification sweep checks — see t
 
 ## Commands
 
-> The synopses below are written as `dbscrub <command>` for readability.
-> **There is no such command.** Run each one as
-> `dotnet run --project src/DbScrub.Cli -- <command> …` from the repository
-> root, as in the quick start above.
+> Run these from the repository root, as in the quick start above.
 
 ### `report` — what would happen
 
 ```bash
-dbscrub report --server <server> --database <name> --config <path>
+.\dbscrub report --server <server> --database <name> --config <path>
 ```
 
 Reads the database, compares it to your config, and prints the plan: which
@@ -196,7 +207,7 @@ returned `0` would gate nothing.
 ### `clean` — actually change the data
 
 ```bash
-dbscrub clean --server <server> --database <name> --config <path> [--yes] [--dry-run] [--fail-on-unclassified]
+.\dbscrub clean --server <server> --database <name> --config <path> [--yes] [--dry-run] [--fail-on-unclassified]
 ```
 
 Prints the same plan `report` does, asks you to type the database name, then
@@ -228,7 +239,7 @@ absent rather than accepted and ignored.
 ### `status` — is this copy safe?
 
 ```bash
-dbscrub status --server <server> --database <name> [--config <path>]
+.\dbscrub status --server <server> --database <name> [--config <path>]
 ```
 
 Answers "has this database been cleaned?" Exit code `0` means yes, `2` means
@@ -483,7 +494,7 @@ deliberately incomplete, so the unclassified list has something in it and the
 paste-it-back loop is worth doing.
 
 ```bash
-dotnet run --project src/DbScrub.Cli -- report --server "localhost\MSSQLSERVER02" --database DbScrubTest --config config/dbscrubtest.masking.json
+.\dbscrub report --server "localhost\MSSQLSERVER02" --database DbScrubTest --config config/dbscrubtest.masking.json
 ```
 
 Substitute your own server name from the section above — `localhost\MSSQLSERVER02`
