@@ -1,0 +1,12 @@
+{
+  "$comment": "STARTER CONFIG. Copy this file, give it a name of your own (for example config/mydb.masking.json), and change ONE thing before you run anything: put your own SQL Server instance name in allowedServers below. Spell it exactly as you would type it into SQL Server Management Studio — 'localhost' only matches a DEFAULT instance, so a named instance must be written in full, like 'localhost\\SQLEXPRESS'. The tables list is deliberately empty. Run `report` next: it reads your database, finds every column it has no rule for, and prints them already formatted to paste straight back into the tables list below. Fill them in, run report again, and repeat until it says every column has a rule. That loop is the intended way to build this file — nobody can list every column in a real database from memory. Full walkthrough in docs/getting-started.html. Never put a password in this file.",
+
+  "defaults": {
+    "allowedServers": ["localhost"],
+    "unclassifiedColumns": "warn",
+    "batchSize": 5000,
+    "repairUsers": []
+  },
+
+  "tables": []
+}

@@ -249,7 +249,7 @@ footer p { margin: 0 0 .4rem; }
     <span class="fact">SQL Server 2019+</span>
     <span class="fact">localhost only</span>
     <span class="fact">no ORM</span>
-    <span class="fact">360 unit tests</span>
+    <span class="fact">477 unit tests</span>
   </div>
 
   <div class="banner">
@@ -263,78 +263,158 @@ footer p { margin: 0 0 .4rem; }
 <section id="run">
   <p class="part-label">Part 1</p>
   <h2 class="part">Running it</h2>
-  <p class="part-sub">Eight steps from a fresh clone to a masked database. Steps 4 and 6 only ever read — you can run them as often as you like while you get the config right.</p>
+  <p class="part-sub">From nothing installed to a masked database. Assumes no prior knowledge of this tool. Steps 7, 9 and 11 only ever read — run them as often as you like while you get the config right.</p>
+
+  <div class="callout">
+    <h4>How you actually run dbscrub</h4>
+    <p><strong>There is no <code class="inline">dbscrub</code> command yet.</strong> It is not installed onto your system and it is not on your PATH. Every command in this guide is run through the .NET toolchain, from the folder you cloned into:</p>
+    <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb --config my-config.json</code></pre></div>
+    <p>The bare <code class="inline">--</code> in the middle matters. Everything before it is for the <code class="inline">dotnet</code> command; everything after it is passed to dbscrub. Leave it out and <code class="inline">dotnet</code> will try to interpret <code class="inline">--server</code> as its own option and fail.</p>
+    <p><strong>Run every command below from the repository root</strong> — the folder containing <code class="inline">DbScrub.sln</code>. Not from <code class="inline">src</code>, not from <code class="inline">bin</code>.</p>
+  </div>
 
   <ol class="steps">
 
     <li class="step">
       <span class="num">1</span>
-      <div class="step-head"><h4>Build it</h4></div>
-      <p>You need the .NET 10 runtime and a SQL Server running on your own machine, using Windows authentication. <code class="inline">report</code> and <code class="inline">status</code> only need to read the database structure; <code class="inline">clean</code> also writes to the tables it masks and runs <code class="inline">ALTER DATABASE</code> and <code class="inline">ALTER TABLE</code> — in practice, <code class="inline">db_owner</code> on the copy.</p>
-      <div class="code"><pre><code>dotnet build</code></pre></div>
+      <div class="step-head"><h4>Get the code</h4></div>
+      <p>Clone the repository and move into it. Every later step assumes you are in this folder.</p>
+      <div class="code"><pre><code>git clone https://github.com/jimsowers/dbscrub.git
+cd dbscrub</code></pre></div>
     </li>
 
     <li class="step">
       <span class="num">2</span>
-      <div class="step-head"><h4>Make a practice database</h4><span class="pill opt">Optional</span></div>
-      <p>Builds <code class="inline">DbScrubTest</code>, a small database full of fake data shaped like the real thing — a temporal table, change tracking, an audit table, and a table with no primary key. It drops and recreates, so it is also how you get back to a known state after a run.</p>
-      <div class="code"><pre><code>sqlcmd -S "localhost\MSSQLSERVER02" -E -i scripts\create-test-db.sql</code></pre></div>
+      <div class="step-head"><h4>Check you have the .NET 10 SDK</h4></div>
+      <p>The SDK is the toolkit that builds and runs the program. Ask it what version it is:</p>
+      <div class="code"><pre><code>dotnet --version</code></pre></div>
+      <p>You want a number starting with <strong>10.</strong> If the command is not recognised, or the number starts with 8 or 9, install the .NET 10 SDK from <code class="inline">dotnet.microsoft.com/download</code> and open a new terminal afterwards so the change takes effect.</p>
+      <p>You also need <strong>SQL Server 2019 or later running on this same machine</strong>, and permission to connect to it as yourself (Windows authentication). <code class="inline">report</code> and <code class="inline">status</code> only read the database structure. <code class="inline">clean</code> also writes to the tables it masks and runs <code class="inline">ALTER DATABASE</code> and <code class="inline">ALTER TABLE</code> — in practice, <code class="inline">db_owner</code> on the copy.</p>
     </li>
 
     <li class="step">
       <span class="num">3</span>
-      <div class="step-head"><h4>Write a config</h4></div>
-      <p>One JSON file describing what to do with each column. Start with almost nothing — step 4 will tell you what to add.</p>
-      <div class="code"><pre><code>{
-  "defaults": { "allowedServers": ["localhost"] },
-  "tables": []
-}</code></pre></div>
-    </li>
-
-    <li class="step safe">
-      <span class="num">4</span>
-      <div class="step-head"><h4>Ask what would happen</h4><span class="pill safe">Read only</span></div>
-      <p>Reads the database, compares it to your config, and prints the plan: which tables get emptied, which columns get masked and how, and everything still unclassified. Changes nothing.</p>
-      <div class="code"><pre><code>dbscrub report --server localhost --database MyDb --config my-config.json</code></pre></div>
-    </li>
-
-    <li class="step safe">
-      <span class="num">5</span>
-      <div class="step-head"><h4>Paste the answer back, then repeat step 4</h4></div>
-      <p>The report ends with every column nobody has classified yet, already formatted as JSON. Paste it into your config, change <code class="inline">keep</code> to a real strategy wherever the column actually holds personal data, and run <code class="inline">report</code> again. Repeat until the unclassified list is empty.</p>
-      <p><strong>This loop is the intended way to build a config.</strong> Nobody can list every column in a production database from memory.</p>
-    </li>
-
-    <li class="step safe">
-      <span class="num">6</span>
-      <div class="step-head"><h4>Dry run</h4><span class="pill safe">Read only</span></div>
-      <p>The same plan, but reached through <code class="inline">clean</code>'s own safety checks — so it also proves the server allowlist and the config would let a real run start. Never prompts, so it is safe inside a script.</p>
-      <div class="code"><pre><code>dbscrub clean --server localhost --database MyDb --config my-config.json --dry-run</code></pre></div>
-    </li>
-
-    <li class="step danger">
-      <span class="num">7</span>
-      <div class="step-head"><h4>Clean it</h4><span class="pill danger">Modifies data</span></div>
-      <p>Prints the plan, then asks you to type the database name exactly before it changes anything. Add <code class="inline">--yes</code> to skip the prompt — allowed only on <code class="inline">localhost</code>, <code class="inline">.</code> or <code class="inline">127.0.0.1</code>, with or without an instance name.</p>
-      <div class="code"><pre><code>dbscrub clean --server localhost --database MyDb --config my-config.json</code></pre></div>
-      <p>Add <code class="inline">--fail-on-unclassified</code> to refuse to run while any column still has no verdict, whatever the config says. There is deliberately no flag that loosens it.</p>
+      <div class="step-head"><h4>Build it</h4></div>
+      <p>Compiles the tool. Expect <code class="inline">Build succeeded</code> with 0 warnings and 0 errors. This produces no <code class="inline">dbscrub</code> command — see the note above for how you run it.</p>
+      <div class="code"><pre><code>dotnet build</code></pre></div>
     </li>
 
     <li class="step">
+      <span class="num">4</span>
+      <div class="step-head"><h4>Find your SQL Server's exact name</h4></div>
+      <p><strong>This is the step that trips up almost everyone, so do it properly rather than guessing.</strong> dbscrub matches server names <em>character for character</em>, and the name you need depends on how SQL Server was installed. Run this in PowerShell:</p>
+      <div class="code"><pre><code>Get-Service | Where-Object { $_.Name -eq 'MSSQLSERVER' -or $_.Name -like 'MSSQL$*' }</code></pre></div>
+      <p>Read the <code class="inline">Name</code> column of the result:</p>
+      <ul>
+        <li><code class="inline">MSSQLSERVER</code> — a <strong>default</strong> instance. Your server name is <code class="inline">localhost</code>.</li>
+        <li><code class="inline">MSSQL$SOMETHING</code> — a <strong>named</strong> instance. Your server name is <code class="inline">localhost\SOMETHING</code>. For example <code class="inline">MSSQL$SQLEXPRESS</code> means <code class="inline">localhost\SQLEXPRESS</code>.</li>
+      </ul>
+      <p>Write that name down. It goes in two places: your config file, and every command you type. <code class="inline">localhost</code> on its own does <strong>not</strong> cover a named instance — that is not a bug, it is the safety check working, and there is no flag to loosen it.</p>
+    </li>
+
+    <li class="step">
+      <span class="num">5</span>
+      <div class="step-head"><h4>Make a practice database</h4><span class="pill opt">Optional but recommended</span></div>
+      <p>Builds <code class="inline">DbScrubTest</code>, a small database of fake data shaped like the real thing — a temporal table, change tracking, an audit table, and a table with no primary key. Nothing in it is real, so you can do anything to it. It drops and recreates, so it is also how you get back to a known state after a run.</p>
+      <p>Replace the server name with your own from step 4:</p>
+      <div class="code"><pre><code>sqlcmd -S "localhost" -E -i scripts\create-test-db.sql</code></pre></div>
+    </li>
+
+    <li class="step">
+      <span class="num">6</span>
+      <div class="step-head"><h4>Make your config file</h4></div>
+      <p>One JSON file describes what to do with every column. You do not write it from scratch and you do not need to know your schema — start from the supplied starter and let step 7 tell you the rest.</p>
+      <p>Copy <code class="inline">config/starter.masking.json</code> to a name of your own:</p>
+      <div class="code"><pre><code>copy config\starter.masking.json config\mydb.masking.json</code></pre></div>
+      <p>Open your copy and change <strong>one line</strong> — put your server name from step 4 into <code class="inline">allowedServers</code>. That list is the safety check: dbscrub refuses to connect to anything not on it, and there is no override flag.</p>
+      <div class="code"><pre><code>"allowedServers": ["localhost"]</code></pre></div>
+    </li>
+
+
+    <li class="step safe">
+      <span class="num">7</span>
+      <div class="step-head"><h4>Ask what would happen</h4><span class="pill safe">Read only</span></div>
+      <p>Reads your database, compares it to your config, and prints the plan: which tables get emptied, which columns get masked and how, and every column it has no rule for. <strong>Changes nothing</strong>, so run it as often as you like.</p>
+      <p>Use your own server name and database name:</p>
+      <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- report --server localhost --database DbScrubTest --config config/mydb.masking.json</code></pre></div>
+      <p>On a large database the list of unruled columns is summarised rather than printed in full. Add <code class="inline">--review-all</code> to see every one of them.</p>
+    </li>
+
+    <li class="step safe">
       <span class="num">8</span>
+      <div class="step-head"><h4>Paste the answer back, then run step 7 again</h4></div>
+      <p>The report ends with the columns nobody has classified yet, <strong>already formatted as JSON ready to paste</strong>. Paste them into the <code class="inline">tables</code> list in your config, change <code class="inline">keep</code> to a real strategy wherever the column actually holds personal data, and run <code class="inline">report</code> again. Repeat until it says every column has a rule.</p>
+      <p><strong>This loop is the intended way to build a config</strong>, not a workaround. Nobody can list every column in a real database from memory, so the tool tells you instead.</p>
+      <p>The four strategies are explained further down this page. <code class="inline">config/masking.sample.json</code> is a worked example showing all of them together.</p>
+    </li>
+
+    <li class="step safe">
+      <span class="num">9</span>
+      <div class="step-head"><h4>Dry run</h4><span class="pill safe">Read only</span></div>
+      <p>The same plan, but reached through <code class="inline">clean</code>'s own safety checks — so it also proves the server allowlist and your config would let a real run start. Never prompts, so it is safe inside a script.</p>
+      <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- clean --server localhost --database DbScrubTest --config config/mydb.masking.json --dry-run</code></pre></div>
+    </li>
+
+    <li class="step danger">
+      <span class="num">10</span>
+      <div class="step-head"><h4>Clean it</h4><span class="pill danger">Modifies data</span></div>
+      <p>The same command <strong>without</strong> <code class="inline">--dry-run</code>. It prints the plan, then asks you to type the database name exactly before it changes anything.</p>
+      <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- clean --server localhost --database DbScrubTest --config config/mydb.masking.json</code></pre></div>
+      <p>Add <code class="inline">--yes</code> to skip the typed confirmation — allowed only on <code class="inline">localhost</code>, <code class="inline">.</code> or <code class="inline">127.0.0.1</code>. Add <code class="inline">--fail-on-unclassified</code> to refuse to run while any column still has no rule. There is deliberately no flag that loosens anything.</p>
+    </li>
+
+    <li class="step">
+      <span class="num">11</span>
       <div class="step-head"><h4>Check it</h4><span class="pill safe">Read only</span></div>
-      <p><code class="inline">clean</code> already ran the verification sweep and wrote the mark, so this is the independent second opinion — the one a script or a build step can ask without doing anything.</p>
-      <p>Answers “has this database been cleaned?” so scripts and build steps can branch on the exit code. <code class="inline">--config</code> is optional here and is read only for the list of allowed servers — you need it if your SQL Server is a named instance.</p>
-      <div class="code"><pre><code>dbscrub status --server localhost --database MyDb</code></pre></div>
+      <p>Answers “has this database been cleaned?” so a script or build step can branch on the exit code. <code class="inline">clean</code> already ran the verification sweep and wrote the mark; this is the independent second opinion.</p>
+      <div class="code"><pre><code>dotnet run --project src/DbScrub.Cli -- status --server localhost --database DbScrubTest --config config/mydb.masking.json</code></pre></div>
+      <p><code class="inline">--config</code> is optional here and is read only for the allowed-servers list — but <strong>you need it if your SQL Server is a named instance</strong>, because without it only the built-in defaults apply and those cover default instances only.</p>
     </li>
 
   </ol>
 
+  <div class="callout warn">
+    <h4>The two mistakes everybody makes first</h4>
+    <p><strong>1. A single backslash in the config file.</strong> If your instance is <code class="inline">localhost\SQLEXPRESS</code>, then inside a JSON file it must be written with <strong>two</strong> backslashes:</p>
+    <div class="code"><pre><code>"allowedServers": ["localhost\\SQLEXPRESS"]     ← correct
+"allowedServers": ["localhost\SQLEXPRESS"]      ← breaks</code></pre></div>
+    <p>A single backslash is not legal inside a JSON string. Get it wrong and you see <code class="inline">The file is not valid JSON. 'S' is an invalid escapable character</code>, which does not obviously point at the backslash. On the command line, type it normally with one backslash — the doubling is a JSON rule, not a dbscrub rule.</p>
+    <p><strong>2. Using <code class="inline">localhost</code> for a named instance.</strong> They are different servers as far as dbscrub is concerned, and matching is exact by design. Step 4 tells you which one you have.</p>
+  </div>
+
   <div class="callout">
-    <h4>Running it without installing anything</h4>
-    <p>Every <code class="inline">dbscrub</code> above can be run straight from the repo as
-    <code class="inline">dotnet run --project src/DbScrub.Cli -- report --server …</code>, or from the build output at
-    <code class="inline">src\DbScrub.Cli\bin\Debug\net10.0\dbscrub.exe</code>.</p>
+    <h4>When something goes wrong</h4>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>What you see</th><th>What it means</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code class="inline">Refusing to connect to '…'</code></td>
+          <td>Your server is not in <code class="inline">allowedServers</code>. The message lists what <em>is</em> allowed. Add yours to the config — there is no override flag, on purpose.</td>
+        </tr>
+        <tr>
+          <td><code class="inline">The server was not found or was not accessible</code></td>
+          <td>The instance name is wrong, or SQL Server is not running. Redo step 4.</td>
+        </tr>
+        <tr>
+          <td><code class="inline">The file is not valid JSON</code></td>
+          <td>Almost always a single backslash in the server name. See above.</td>
+        </tr>
+        <tr>
+          <td><code class="inline">'…' is already sanitized — nothing to do</code></td>
+          <td>Not an error. This copy has already been cleaned, and cleaning it again would achieve nothing. Restore a fresh copy to run again.</td>
+        </tr>
+        <tr>
+          <td><code class="inline">MSB1009</code> or “project file does not exist”</td>
+          <td>You are in the wrong folder. Run from the repository root — the one containing <code class="inline">DbScrub.sln</code>.</td>
+        </tr>
+        <tr>
+          <td>Unrecognised option, or <code class="inline">--server</code> rejected</td>
+          <td>The bare <code class="inline">--</code> is missing between <code class="inline">--project src/DbScrub.Cli</code> and the dbscrub command.</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
   </div>
 </section>
 
