@@ -61,11 +61,13 @@ that could be mistaken for real is a value that ends up in an email.
 
 ## Requirements
 
-- .NET 10 runtime (the SDK if you are building it yourself)
-- SQL Server 2019 or later, running locally
-- Windows authentication. `report` and `status` need only to read the database
-  structure. `clean` additionally needs to write to the tables it masks, and to
-  run `ALTER DATABASE` and `ALTER TABLE` — in practice, `db_owner` on the copy.
+- **The .NET 10 SDK.** Not just the runtime — there is no installable package
+  yet, so you always build from source. Check with `dotnet --version`; you want
+  a number starting with `10.`
+- **SQL Server 2019 or later, running on the same machine.**
+- **Windows authentication.** `report` and `status` need only to read the
+  database structure. `clean` additionally writes to the tables it masks and
+  runs `ALTER DATABASE` and `ALTER TABLE` — in practice, `db_owner` on the copy.
 
 ## Install
 
@@ -75,67 +77,93 @@ cd dbscrub
 dotnet build
 ```
 
-There is no `dotnet tool` package yet, so `dbscrub` is not on your PATH. Run it
-either way — both are equivalent, and the rest of this file writes the short
-form:
+**There is no `dbscrub` command.** It is not installed and not on your PATH.
+Every example below is run through the .NET toolchain, from the repository root
+— the folder containing `DbScrub.sln`:
 
 ```bash
 dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb --config my-config.json
 ```
 
+The bare `--` matters: everything before it is for `dotnet`, everything after it
+goes to dbscrub. Omit it and `dotnet` tries to interpret `--server` itself.
+
+## Find your SQL Server's exact name
+
+dbscrub matches server names character for character, so get this right before
+anything else. In PowerShell:
+
 ```bash
-src\DbScrub.Cli\bin\Debug\net10.0\dbscrub.exe report --server localhost --database MyDb --config my-config.json
+Get-Service | Where-Object { $_.Name -eq 'MSSQLSERVER' -or $_.Name -like 'MSSQL$*' }
 ```
 
-All commands assume you are in the repo root.
+- `MSSQLSERVER` — a **default** instance. Your name is `localhost`.
+- `MSSQL$SQLEXPRESS` — a **named** instance. Your name is `localhost\SQLEXPRESS`.
+
+`localhost` does **not** cover a named instance. That is the safety check
+working as designed, and there is no flag to loosen it.
 
 ---
 
 ## Quick start
 
-**1. Write a config** describing what to do with each column. Start with almost
-nothing:
-
-```json
-{
-  "defaults": { "allowedServers": ["localhost"] },
-  "tables": []
-}
-```
-
-**2. Ask what it would do.** This only reads:
+**1. Copy the starter config.** You do not write one from scratch and you do not
+need to know your schema in advance.
 
 ```bash
-dbscrub report --server localhost --database MyDb --config my-config.json
+copy config\starter.masking.json config\mydb.masking.json
+```
+
+Open your copy and change **one line** — put your server name from above into
+`allowedServers`:
+
+```json
+"allowedServers": ["localhost"]
+```
+
+> **A named instance needs two backslashes inside JSON.** `"localhost\\SQLEXPRESS"`
+> is correct; `"localhost\SQLEXPRESS"` is not valid JSON and fails with
+> `'S' is an invalid escapable character`. On the command line, type it normally
+> with one backslash — the doubling is a JSON rule, not a dbscrub rule.
+
+**2. Ask what it would do.** This only reads, so run it as often as you like:
+
+```bash
+dotnet run --project src/DbScrub.Cli -- report --server localhost --database MyDb --config config/mydb.masking.json
 ```
 
 **3. Paste the answer back.** The report ends with every column nobody has
-classified yet, already formatted as JSON. Paste it into your config, change
-`keep` to a real strategy wherever the column actually holds personal data, and
-run `report` again.
+classified yet, already formatted as JSON. Paste it into the `tables` list,
+change `keep` to a real strategy wherever the column actually holds personal
+data, and run `report` again.
 
-Repeat until the unclassified list is empty. That loop is the intended way to
-build a config — nobody can list every column from memory.
+Repeat until it says every column has a rule. That loop is the intended way to
+build a config — nobody can list every column from memory. On a large database
+the list is summarised; add `--review-all` for every line of it.
 
 **4. Rehearse it.** Same plan, but reached through `clean`'s own safety checks,
 so it also proves a real run would be allowed to start. Still changes nothing:
 
 ```bash
-dbscrub clean --server localhost --database MyDb --config my-config.json --dry-run
+dotnet run --project src/DbScrub.Cli -- clean --server localhost --database MyDb --config config/mydb.masking.json --dry-run
 ```
 
-**5. Run it.** This one changes data. It prints the plan, then asks you to type
-the database name before it touches anything:
+**5. Run it.** The same command **without** `--dry-run`. It prints the plan, then
+asks you to type the database name before it touches anything:
 
 ```bash
-dbscrub clean --server localhost --database MyDb --config my-config.json
+dotnet run --project src/DbScrub.Cli -- clean --server localhost --database MyDb --config config/mydb.masking.json
 ```
 
 **6. Confirm.** Exit code `0` means the copy is clean, `2` means it is not:
 
 ```bash
-dbscrub status --server localhost --database MyDb
+dotnet run --project src/DbScrub.Cli -- status --server localhost --database MyDb --config config/mydb.masking.json
 ```
+
+`--config` is optional for `status` and is read only for the allowed-servers
+list — but you need it if your SQL Server is a named instance, since without it
+only the built-in defaults apply and those cover default instances only.
 
 For what happens between steps 5 and 6 — the order of operations, why temporal
 history needs special handling, and what the verification sweep checks — see the
@@ -144,6 +172,11 @@ history needs special handling, and what the verification sweep checks — see t
 ---
 
 ## Commands
+
+> The synopses below are written as `dbscrub <command>` for readability.
+> **There is no such command.** Run each one as
+> `dotnet run --project src/DbScrub.Cli -- <command> …` from the repository
+> root, as in the quick start above.
 
 ### `report` — what would happen
 
@@ -450,8 +483,11 @@ deliberately incomplete, so the unclassified list has something in it and the
 paste-it-back loop is worth doing.
 
 ```bash
-dbscrub report --server "localhost\MSSQLSERVER02" --database DbScrubTest --config config\dbscrubtest.masking.json
+dotnet run --project src/DbScrub.Cli -- report --server "localhost\MSSQLSERVER02" --database DbScrubTest --config config/dbscrubtest.masking.json
 ```
+
+Substitute your own server name from the section above — `localhost\MSSQLSERVER02`
+is one particular machine's named instance, not a default.
 
 Then try `clean --dry-run`, then `clean` for real. Nothing in there is a real
 person: the domains, phone numbers, and SSN prefixes are all ranges reserved by
