@@ -74,7 +74,7 @@ public static class CleanRunner
                 var result = await session.MaskTableAsync(
                     table,
                     options.BatchSize,
-                    new Progress<long>(rows => progress?.Report($"  {table.QualifiedName}: {rows:N0} rows")),
+                    new InlineProgress<long>(rows => progress?.Report($"  {table.QualifiedName}: {rows:N0} rows")),
                     cancellationToken);
 
                 masked.Add(result);
